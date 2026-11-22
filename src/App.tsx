@@ -352,14 +352,30 @@ export const App: React.FC = () => {
       selectStyle: (id: ArchitecturalStyle) => setStyle(id),
       selectLighting: (id: LightingPreset) => setLighting(id),
       setPostFX: (enabled: boolean) => setPostFX(enabled),
+      setCaptureMode: (enabled: boolean) => {
+        if (massingVpRef.current) {
+          massingVpRef.current.controls.enableDamping = !enabled;
+        }
+        if (buildingVpRef.current) {
+          buildingVpRef.current.controls.enableDamping = !enabled;
+        }
+      },
       selectFaceByDir: (
         dir: string,
-        mode: 'largest' | 'highest' | 'lowest' | 'smallest' = 'largest',
+        mode: 'largest' | 'highest' | 'lowest' | 'smallest' | 'center-lower' = 'largest',
         index = 0
       ) => {
-        const faces = computeExposedFaces(stateRef.current).filter((f) => !f.locked && f.dir === dir);
+        let faces = computeExposedFaces(stateRef.current).filter((f) => !f.locked && f.dir === dir);
         if (faces.length === 0) return false;
-        if (mode === 'highest') {
+        if (mode === 'center-lower') {
+          const lower = faces.filter((f) => f.center[1] < 7.5);
+          if (lower.length > 0) faces = lower;
+          faces.sort(
+            (a, b) =>
+              b.width * b.height - a.width * a.height ||
+              Math.abs(a.center[0]) - Math.abs(b.center[0])
+          );
+        } else if (mode === 'highest') {
           faces.sort((a, b) => b.center[1] - a.center[1] || b.width * b.height - a.width * a.height);
         } else if (mode === 'lowest') {
           faces.sort((a, b) => a.center[1] - b.center[1] || b.width * b.height - a.width * a.height);
@@ -378,7 +394,7 @@ export const App: React.FC = () => {
         if (!f) return;
         massingVpRef.current?.showProgrammaticDragPreview(f, delta, isSetback);
         const inset = isSetback && delta > 0 ? 1.6 : 0;
-        if (Math.abs(delta) >= 0.4) {
+        if (Math.abs(delta) >= 0.08) {
           const res = applyExtrude(stateRef.current, f, delta, inset);
           setPreviewState(res.state);
         } else {
