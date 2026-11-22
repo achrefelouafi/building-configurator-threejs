@@ -38,7 +38,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="brand-mark">
           <Building2 size={16} />
         </div>
-        <span className="brand-title">FORMA</span>
+        <span className="brand-title">VOLUMECRAFT</span>
         <span className="brand-sub">Parametric Building Configurator</span>
       </div>
 

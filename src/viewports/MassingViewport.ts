@@ -102,8 +102,8 @@ export class MassingViewport {
 
     const w = Math.max(1, container.clientWidth);
     const h = Math.max(1, container.clientHeight);
-    this.camera = new THREE.PerspectiveCamera(42, w / h, 0.2, 400);
-    this.camera.position.set(22, 18, 25);
+    this.camera = new THREE.PerspectiveCamera(32, w / h, 0.25, 600);
+    this.camera.position.set(28, 19, 32);
 
     this.renderer = new THREE.WebGPURenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -255,6 +255,15 @@ export class MassingViewport {
 
     this.rebuildMassingMeshes();
     this.rebuildOverlaysAndGizmo();
+  }
+
+  public showProgrammaticDragPreview(face: MassingFace | null, delta: number, isSetback = false): void {
+    if (!face || Math.abs(delta) < 0.05) {
+      this.clearGroup(this.previewGroup, true);
+      this.gizmoGroup.position.set(0, 0, 0);
+      return;
+    }
+    this.rebuildDragPreview(face, delta, isSetback);
   }
 
   public setSelectedFaceId(id: string | null): void {

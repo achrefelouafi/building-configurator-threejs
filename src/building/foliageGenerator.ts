@@ -76,10 +76,10 @@ export function createBotanicalLeafSprigTextures(anisotropy = 8): FoliageTexture
     ctx.lineTo(0, -len * 0.14);
     ctx.stroke();
 
-    // Organic leaf silhouette
-    const rBase = Math.round(78 + hueShift * 18 + brightShift * 26);
-    const gBase = Math.round(122 + hueShift * 14 + brightShift * 34);
-    const bBase = Math.round(56 + brightShift * 16);
+    // Realistic muted botanical olive-forest leaf palette (avoids cartoon lime greens)
+    const rBase = Math.round(52 + hueShift * 14 + brightShift * 16);
+    const gBase = Math.round(74 + hueShift * 12 + brightShift * 20);
+    const bBase = Math.round(42 + brightShift * 12);
 
     const grad = ctx.createLinearGradient(0, 0, 0, -len);
     grad.addColorStop(0, `rgb(${Math.max(20, rBase - 22)}, ${Math.max(35, gBase - 24)}, ${Math.max(18, bBase - 14)})`);
@@ -501,13 +501,13 @@ export class BotanicalFoliageBatcher {
         quat.setFromEuler(dummyEuler);
 
         const cardScale = (0.78 + rand() * 0.52) * heightScale;
-        // Subtle sunlit upper-outer crown brightness vs deeper shaded inner canopy
+        // Natural muted sunlit crown vs deep shaded inner canopy
         const heightNorm = Math.max(0, Math.min(1, (cardPos.y - (baseY + trunkH * 0.8)) / (crownH * 1.15)));
-        const shade = 0.76 + heightNorm * 0.28 + (rand() - 0.5) * 0.14;
+        const shade = 0.56 + heightNorm * 0.28 + (rand() - 0.5) * 0.12;
         const tint: [number, number, number] = [
-          Math.min(1.12, shade * (0.94 + rand() * 0.14)),
-          Math.min(1.15, shade * (1.02 + rand() * 0.08)),
-          Math.min(1.05, shade * (0.86 + rand() * 0.1)),
+          Math.min(0.92, shade * (0.94 + rand() * 0.1)),
+          Math.min(0.95, shade * (0.98 + rand() * 0.08)),
+          Math.min(0.88, shade * (0.86 + rand() * 0.08)),
         ];
 
         addCurvedLeafCard(this.leaves, cardPos, canopyCenter, quat, cardScale, cardScale * 1.08, tint);
@@ -546,12 +546,12 @@ export class BotanicalFoliageBatcher {
       euler.set((rand() - 0.5) * 1.15, rand() * Math.PI * 2, (rand() - 0.5) * 0.9);
       quat.setFromEuler(euler);
 
-      const sz = 0.44 + rand() * 0.28;
-      const shade = 0.8 + ry * 0.35 + (rand() - 0.5) * 0.14;
+      const sz = 0.42 + rand() * 0.24;
+      const shade = 0.58 + ry * 0.28 + (rand() - 0.5) * 0.12;
       addCurvedLeafCard(this.leaves, pos, center, quat, sz, sz * 1.05, [
         shade * 0.94,
-        shade * 1.04,
-        shade * 0.88,
+        shade * 0.98,
+        shade * 0.86,
       ]);
     }
   }

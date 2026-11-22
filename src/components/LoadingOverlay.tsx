@@ -60,7 +60,7 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
             <Building2 size={22} />
           </div>
           <div>
-            <div className="loader-title">FORMA</div>
+            <div className="loader-title">VOLUMECRAFT</div>
             <div className="loader-subtitle">
               Parametric Massing Studio · WebGPU PBR Engine
             </div>

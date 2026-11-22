@@ -47,12 +47,12 @@ function subtractIntervals1D(base: WallInterval, cutters: WallInterval[]): WallI
 }
 
 /**
- * Generates a complete, high-detail full-PBR architectural building with:
- * - Real connected hollow 3D empty interiors (floor slabs, plaster ceilings, structural
- *   columns, minimalist elevator/service cores, recessed linear ceiling lights)
- * - Untextured crystal-clear exterior-reflective plate glass (zero z-fighting)
- * - Z-fighting-free double-height entrance portal & cantilevered canopy
- * - Multi-branch botanical trees & terrace shrubs
+ * Generates a complete, z-fighting-free full-PBR architectural building with:
+ * - Strictly separated architectural depth layers (>= 15-55mm clearances everywhere)
+ * - Split non-overlapping FR_Glass panes cleanly framed between mullions & transoms
+ * - Real connected hollow 3D shadowed interiors (floor slabs, ceilings, columns, core,
+ *   transverse partition walls & selective warm recessed ceiling light coves)
+ * - Clean ProdceduralBuildingsThreeJS-style pale urban sidewalk, crosswalks & street trees
  */
 export function generatePBRBuilding(
   state: MassingState,
@@ -96,37 +96,35 @@ export function generatePBRBuilding(
     else if (p.dir !== '-y') wallPatches.push(p);
   }
 
-  // 1. REAL HOLLOW 3D ARCHITECTURAL INTERIORS (connected floor slabs, plaster ceilings,
-  //    structural columns, minimalist elevator core & linear recessed ceiling LEDs!)
+  // 1. Real hollow 3D interiors (strictly inset >= 0.27m from exterior faces -> ZERO z-fighting!)
   buildHollowInteriors(batcher, state.boxes, floorElevations);
 
-  // Pick the primary ground-level facade for the grand architectural main entrance
+  // Pick widest front-facing ground wall for main entrance
   const entrancePatch = pickMainEntrancePatch(wallPatches);
 
-  // 2. Build all exterior architectural facades with connected interior plaster backings
+  // 2. Exterior architectural facades with deep 0.27m reveals & split non-overlapping glass
   for (const patch of wallPatches) {
     buildFacadePatch(batcher, patch, floorElevations, options.style, patch === entrancePatch);
   }
 
-  // 3. Build crisp architectural corner piers at vertical exterior junctions
-  buildCornerPiers(batcher, wallPatches);
+  // 3. Dressed architectural corner quoins (proud by +55mm -> ZERO coplanar clash!)
+  buildCornerPiers(batcher, wallPatches, options.style);
 
-  // 4. Build rooftops, parapets, walkable terraces, glass balustrades, penthouses & solar arrays
+  // 4. Rooftops, parapets, walkable setback terraces, skylights & penthouses
   for (const patch of roofPatches) {
     buildRoofOrTerrace(batcher, foliageBatcher, patch, state.boxes, maxY);
   }
 
-  // 5. Build cantilevered soffits, recessed LED downlights, and optional structural pilotis
+  // 5. Cantilevered timber soffits, recessed downlights & tall structural pilotis
   for (const patch of soffitPatches) {
     buildCantileverSoffit(batcher, patch, state.boxes, options.showColumns);
   }
 
-  // 6. Dynamic urban plaza, architectural benches, streetlamps & botanical trees
+  // 6. Calm pale architectural street, crosswalks, limestone sidewalk & corner street trees
   if (options.showSite) {
     buildSiteContext(batcher, foliageBatcher, state.boxes, minX, maxX, minZ, maxZ);
   }
 
-  // Assemble merged BufferGeometries into one clean Group
   const group = new THREE.Group();
   group.name = 'ProceduralPBRBuilding';
 
@@ -153,6 +151,7 @@ export function generatePBRBuilding(
     bark: palette.bark,
     plazaPaver: palette.plazaPaver,
     asphalt: palette.asphalt,
+    roadMark: palette.roadMark,
   };
 
   for (const [key, geo] of geometries.entries()) {
@@ -164,8 +163,8 @@ export function generatePBRBuilding(
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = `Building_${key}`;
     const isTransparent = key === 'glass' || key === 'balustradeGlass';
-    const isGround = key === 'asphalt';
-    mesh.castShadow = !isTransparent && !isGround;
+    const isRoad = key === 'asphalt' || key === 'roadMark';
+    mesh.castShadow = !isTransparent && !isRoad;
     mesh.receiveShadow = !isTransparent;
     if (isTransparent) {
       mesh.renderOrder = 2;
@@ -198,19 +197,14 @@ export function generatePBRBuilding(
 }
 
 /**
- * Generates real connected hollow 3D architectural interiors inside every MassingBox:
- * - Seamless floor slabs & acoustic plaster ceilings joined cleanly to exterior spandrels
- *   and flush across internal seams between adjacent extruded blocks
- * - World-aligned structural concrete interior columns
- * - Clean minimalist interior elevator/service core on generous floorplates
- * - Recessed linear warm architectural ceiling light coves
+ * Real hollow 3D empty architectural interiors strictly inside the exterior wall envelope
+ * (inset 0.275m on exterior sides, 0.0m flush across shared internal box seams).
  */
 function buildHollowInteriors(
   batcher: MaterialGeometryBatcher,
   boxes: MassingBox[],
   floorElevations: number[]
 ): void {
-  // Helper: check if point (x, y, z) is strictly deep inside the building volume (clearance from all exterior faces)
   const isDeepInside = (x: number, y: number, z: number, margin: number): boolean => {
     const pts: [number, number][] = [
       [x - margin, z - margin],
@@ -240,7 +234,6 @@ function buildHollowInteriors(
     }
     cuts.push(b.max[1]);
 
-    // Check which sides of this box touch another neighboring box (so slabs connect seamlessly flush!)
     const touchesNegX = boxes.some(
       (o) =>
         o.id !== b.id &&
@@ -278,12 +271,11 @@ function buildHollowInteriors(
         o.min[0] < b.max[0] - EPS
     );
 
-    // Tucked safely behind the exterior spandrel cladding (+0.04m) while overlapping
-    // the inner plaster face (-0.25m) so floor/ceiling joints have ZERO cracks!
-    const x0 = b.min[0] + (touchesNegX ? 0.0 : 0.08);
-    const x1 = b.max[0] - (touchesPosX ? 0.0 : 0.08);
-    const z0 = b.min[2] + (touchesNegZ ? 0.0 : 0.08);
-    const z1 = b.max[2] - (touchesPosZ ? 0.0 : 0.08);
+    // Strictly inside the -0.27m interior plaster lining -> ZERO z-fighting with exterior walls/glass!
+    const x0 = b.min[0] + (touchesNegX ? 0.0 : 0.27);
+    const x1 = b.max[0] - (touchesPosX ? 0.0 : 0.27);
+    const z0 = b.min[2] + (touchesNegZ ? 0.0 : 0.27);
+    const z1 = b.max[2] - (touchesPosZ ? 0.0 : 0.27);
     if (x1 - x0 < 0.4 || z1 - z0 < 0.4) continue;
 
     for (let s = 0; s < cuts.length - 1; s++) {
@@ -292,68 +284,58 @@ function buildHollowInteriors(
       const storyH = y1 - y0;
       if (storyH < 1.2) continue;
 
-      const floorTop = y0 + (y0 < 0.05 ? 0.08 : 0.10);
+      const floorTop = y0 + 0.12;
       const ceilBot = y1 - 0.24;
+      const ceilTop = y1 - 0.02;
 
-      // Honed concrete/terrazzo interior floor finish slab
-      batcher.addBox('interiorFloor', x0, y0, z0, x1, floorTop, z1, 3.2);
+      // Dark honed architectural floor finish slab
+      batcher.addBox('interiorFloor', x0, y0 + 0.01, z0, x1, floorTop, z1, 2.8);
 
-      // Matte architectural plaster ceiling slab
+      // Shadowed matte plaster ceiling slab (strictly below y1 - 0.02 -> never fights roofDeck!)
       if (ceilBot > floorTop + 0.5) {
-        batcher.addBox('interiorCeiling', x0, ceilBot, z0, x1, y1 - 0.04, z1, 3.5);
+        batcher.addBox('interiorCeiling', x0, ceilBot, z0, x1, ceilTop, z1, 3.0);
       }
 
-      // Recessed linear architectural warm LED ceiling light troughs
-      const lx0 = b.min[0] + 1.35;
-      const lx1 = b.max[0] - 1.35;
-      const lz0 = b.min[2] + 1.35;
-      const lz1 = b.max[2] - 1.35;
-      if (lx1 - lx0 >= 1.4 && lz1 - lz0 >= 1.4 && ceilBot > floorTop + 1.5) {
+      // Selective subtle recessed linear architectural ceiling lights (only ~60% of bays for authentic lived-in look)
+      const lx0 = x0 + 1.1;
+      const lx1 = x1 - 1.1;
+      const lz0 = z0 + 1.1;
+      const lz1 = z1 - 1.1;
+      if (lx1 - lx0 >= 1.5 && lz1 - lz0 >= 1.5 && ceilBot > floorTop + 1.5) {
         const spanX = lx1 - lx0;
         const spanZ = lz1 - lz0;
-        if (spanX >= spanZ) {
-          const rows = Math.max(1, Math.min(4, Math.floor(spanZ / 3.0)));
-          for (let r = 0; r < rows; r++) {
-            const cz = lz0 + ((r + 0.5) * spanZ) / rows;
-            batcher.addBox(
-              'emissiveWarm',
-              lx0,
-              ceilBot - 0.025,
-              cz - 0.055,
-              lx1,
-              ceilBot + 0.005,
-              cz + 0.055,
-              1.0
-            );
-          }
-        } else {
-          const cols = Math.max(1, Math.min(4, Math.floor(spanX / 3.0)));
-          for (let c = 0; c < cols; c++) {
-            const cx = lx0 + ((c + 0.5) * spanX) / cols;
-            batcher.addBox(
-              'emissiveWarm',
-              cx - 0.055,
-              ceilBot - 0.025,
-              lz0,
-              cx + 0.055,
-              ceilBot + 0.005,
-              lz1,
-              1.0
-            );
+        const segs = Math.max(1, Math.min(3, Math.floor(Math.max(spanX, spanZ) / 4.2)));
+        for (let k = 0; k < segs; k++) {
+          // Deterministic selective lighting rhythm (not every room uniformly blazing)
+          if ((k + s + Math.round(b.min[0])) % 3 === 1 && y0 > 0.1) continue;
+          if (spanX >= spanZ) {
+            const sx0 = lx0 + (spanX * k) / segs + 0.35;
+            const sx1 = lx0 + (spanX * (k + 1)) / segs - 0.35;
+            const cz = (lz0 + lz1) * 0.5;
+            if (sx1 > sx0 + 0.4) {
+              batcher.addBox('emissiveWarm', sx0, ceilBot - 0.03, cz - 0.05, sx1, ceilBot - 0.002, cz + 0.05, 1.0);
+            }
+          } else {
+            const sz0 = lz0 + (spanZ * k) / segs + 0.35;
+            const sz1 = lz0 + (spanZ * (k + 1)) / segs - 0.35;
+            const cx = (lx0 + lx1) * 0.5;
+            if (sz1 > sz0 + 0.4) {
+              batcher.addBox('emissiveWarm', cx - 0.05, ceilBot - 0.03, sz0, cx + 0.05, ceilBot - 0.002, sz1, 1.0);
+            }
           }
         }
       }
 
-      // Clean minimalist central architectural elevator/service core inside generous floorplates
+      // Minimalist central architectural elevator/service core inside generous floorplates
       const bw = b.max[0] - b.min[0];
       const bd = b.max[2] - b.min[2];
       const coreMidY = (floorTop + ceilBot) * 0.5;
-      if (bw >= 8.0 && bd >= 7.0 && ceilBot > floorTop + 1.6) {
+      if (bw >= 7.8 && bd >= 6.8 && ceilBot > floorTop + 1.6) {
         const cx = (b.min[0] + b.max[0]) * 0.5;
         const cz = (b.min[2] + b.max[2]) * 0.5;
-        const coreHalfW = Math.min(2.1, bw * 0.17);
-        const coreHalfD = Math.min(1.8, bd * 0.17);
-        if (isDeepInside(cx, coreMidY, cz, Math.max(coreHalfW, coreHalfD) + 1.8)) {
+        const coreHalfW = Math.min(2.2, bw * 0.19);
+        const coreHalfD = Math.min(1.9, bd * 0.19);
+        if (isDeepInside(cx, coreMidY, cz, Math.max(coreHalfW, coreHalfD) + 1.7)) {
           batcher.addBox(
             'interiorWall',
             cx - coreHalfW,
@@ -362,40 +344,39 @@ function buildHollowInteriors(
             cx + coreHalfW,
             ceilBot,
             cz + coreHalfD,
-            3.0
+            2.6
           );
-          // Subtle recessed architectural elevator portal trim on core face
+          // Subtle recessed lift door frame on core wall
           if (coreHalfW >= 1.1) {
             batcher.addBox(
               'mullion',
-              cx - 0.58,
+              cx - 0.56,
               floorTop,
-              cz + coreHalfD - 0.01,
-              cx + 0.58,
-              Math.min(ceilBot - 0.25, floorTop + 2.3),
-              cz + coreHalfD + 0.03,
+              cz + coreHalfD + 0.005,
+              cx + 0.56,
+              Math.min(ceilBot - 0.25, floorTop + 2.25),
+              cz + coreHalfD + 0.045,
               2.0
             );
           }
         }
       }
 
-      // World-aligned interior structural concrete columns (clear of windows & central core)
+      // World-aligned interior structural columns (strictly deep inside envelope)
       if (ceilBot > floorTop + 1.6) {
-        const gridStep = 5.0;
-        const startX = Math.ceil((b.min[0] + 1.8) / gridStep) * gridStep;
-        const startZ = Math.ceil((b.min[2] + 1.8) / gridStep) * gridStep;
+        const gridStep = 4.8;
+        const startX = Math.ceil((b.min[0] + 1.9) / gridStep) * gridStep;
+        const startZ = Math.ceil((b.min[2] + 1.9) / gridStep) * gridStep;
         const colHalf = 0.20;
         const cxBox = (b.min[0] + b.max[0]) * 0.5;
         const czBox = (b.min[2] + b.max[2]) * 0.5;
 
-        for (let gx = startX; gx <= b.max[0] - 1.8; gx += gridStep) {
-          for (let gz = startZ; gz <= b.max[2] - 1.8; gz += gridStep) {
-            // Skip if inside central core zone
-            if (Math.abs(gx - cxBox) < 2.5 && Math.abs(gz - czBox) < 2.2 && bw >= 8 && bd >= 7) {
+        for (let gx = startX; gx <= b.max[0] - 1.9; gx += gridStep) {
+          for (let gz = startZ; gz <= b.max[2] - 1.9; gz += gridStep) {
+            if (Math.abs(gx - cxBox) < 2.6 && Math.abs(gz - czBox) < 2.3 && bw >= 7.8 && bd >= 6.8) {
               continue;
             }
-            if (!isDeepInside(gx, coreMidY, gz, 1.55)) continue;
+            if (!isDeepInside(gx, coreMidY, gz, 1.6)) continue;
             batcher.addBox(
               'concrete',
               gx - colHalf,
@@ -404,7 +385,7 @@ function buildHollowInteriors(
               gx + colHalf,
               ceilBot,
               gz + colHalf,
-              2.6
+              2.2
             );
           }
         }
@@ -441,7 +422,7 @@ function addWallLocalBox(
   u1: number,
   y1: number,
   d1: number,
-  uvScale = 3.0
+  uvScale = 2.0
 ): void {
   switch (dir) {
     case '+z':
@@ -468,18 +449,14 @@ function addWallQuad(
   y0: number,
   u1: number,
   y1: number,
-  depth: number,
-  uv0: [number, number] = [0, 0],
-  uv1: [number, number] = [1, 1]
+  depth: number
 ): void {
   if (u1 - u0 < 0.02 || y1 - y0 < 0.02) return;
-  const [ua, va] = uv0;
-  const [ub, vb] = uv1;
   const uvs: [[number, number], [number, number], [number, number], [number, number]] = [
-    [ua, va],
-    [ub, va],
-    [ub, vb],
-    [ua, vb],
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
   ];
 
   switch (dir) {
@@ -506,6 +483,60 @@ function addWallQuad(
   }
 }
 
+/**
+ * Helper: renders a clean, strictly non-overlapping grid of glass panes separated by
+ * vertical mullions (-0.195..-0.105) and horizontal transoms (-0.185..-0.125)
+ * with every glass sub-pane strictly isolated at depth = -0.165 (ZERO z-fighting!).
+ */
+function buildWindowGlassGrid(
+  batcher: MaterialGeometryBatcher,
+  dir: FaceDir,
+  plane: number,
+  gx0: number,
+  gx1: number,
+  gy0: number,
+  gy1: number,
+  vSplits: number[], // interior vertical mullion U positions
+  hSplits: number[], // interior horizontal transom Y positions
+  mullionHalfW = 0.022
+): void {
+  const glassD = -0.165;
+
+  // Vertical mullions strictly spanning gy0..gy1 at depth [-0.195, -0.105]
+  for (const mu of vSplits) {
+    addWallLocalBox(batcher, dir, plane, 'mullion', mu - mullionHalfW, gy0, -0.195, mu + mullionHalfW, gy1, -0.105, 1.8);
+  }
+
+  // Horizontal transoms strictly split BETWEEN vertical mullions (and offset in depth -0.185..-0.125) -> ZERO coplanar intersections!
+  const uBounds = [gx0, ...vSplits.flatMap((m) => [m - mullionHalfW, m + mullionHalfW]), gx1];
+  for (const hy of hSplits) {
+    for (let i = 0; i < uBounds.length; i += 2) {
+      const sa = uBounds[i];
+      const sb = uBounds[i + 1];
+      if (sb - sa > 0.02) {
+        addWallLocalBox(batcher, dir, plane, 'mullion', sa, hy - mullionHalfW, -0.185, sb, hy + mullionHalfW, -0.125, 1.8);
+      }
+    }
+  }
+
+  // Separate glass sub-panes strictly inside each cell between mullions & transoms!
+  const vCells: [number, number][] = [];
+  for (let i = 0; i < uBounds.length; i += 2) {
+    if (uBounds[i + 1] - uBounds[i] > 0.02) vCells.push([uBounds[i], uBounds[i + 1]]);
+  }
+  const yBounds = [gy0, ...hSplits.flatMap((h) => [h - mullionHalfW, h + mullionHalfW]), gy1];
+  const hCells: [number, number][] = [];
+  for (let j = 0; j < yBounds.length; j += 2) {
+    if (yBounds[j + 1] - yBounds[j] > 0.02) hCells.push([yBounds[j], yBounds[j + 1]]);
+  }
+
+  for (const [ua, ub] of vCells) {
+    for (const [va, vb] of hCells) {
+      addWallQuad(batcher, dir, plane, 'glass', ua + 0.002, va + 0.002, ub - 0.002, vb - 0.002, glassD);
+    }
+  }
+}
+
 function buildFacadePatch(
   batcher: MaterialGeometryBatcher,
   patch: MergedExteriorPatch,
@@ -517,22 +548,23 @@ function buildFacadePatch(
   const wallW = rect.u1 - rect.u0;
   const wallH = rect.v1 - rect.v0;
 
-  // Very narrow wall slivers stay crisp solid cladding with interior plaster lining
+  // Tactile physical UV tiling scale (real brick & ashlar stone courses!)
+  const uvScale = style === 'brick-loft' ? 1.55 : style === 'travertine-bronze' ? 2.0 : 2.35;
+
   if (wallW < 1.3 || wallH < 1.3) {
-    addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, rect.v0, -0.22, rect.u1, rect.v1, 0.03, 3.0);
-    addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, rect.v0, -0.26, rect.u1, rect.v1, -0.22, 3.0);
+    addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, rect.v0, -0.228, rect.u1, rect.v1, 0.04, uvScale);
+    addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, rect.v0, -0.268, rect.u1, rect.v1, -0.23, 2.4);
     return;
   }
 
   const targetBay =
-    style === 'brick-loft' ? 2.65 : style === 'travertine-bronze' ? 3.2 : 3.05;
+    style === 'brick-loft' ? 2.6 : style === 'travertine-bronze' ? 3.1 : 2.95;
   const numBays = Math.max(1, Math.round(wallW / targetBay));
   const bayW = wallW / numBays;
   const halfPier = Math.min(
-    style === 'brick-loft' ? 0.34 : style === 'travertine-bronze' ? 0.30 : 0.22,
-    bayW * 0.19
+    style === 'brick-loft' ? 0.36 : style === 'travertine-bronze' ? 0.32 : 0.26,
+    bayW * 0.21
   );
-  const uvScale = style === 'brick-loft' ? 2.0 : style === 'travertine-bronze' ? 2.8 : 3.2;
 
   const cuts: number[] = [rect.v0];
   for (const fy of floorElevations) {
@@ -544,7 +576,7 @@ function buildFacadePatch(
 
   const centerBayIdx = Math.floor(numBays / 2);
 
-  // Pre-compute entrance door opening interval so ground plinth NEVER overlaps or z-fights with the door!
+  // Pre-compute entrance door opening interval so plinth never overlaps the doorway!
   let doorCutU0 = 0;
   let doorCutU1 = 0;
   let hasDoorCut = false;
@@ -556,26 +588,24 @@ function buildFacadePatch(
     const wu0 = bu0 + lp;
     const wu1 = bu1 - rp;
     const midU = (wu0 + wu1) * 0.5;
-    const doorW = Math.min(2.1, Math.max(1.2, wu1 - wu0 - 0.18));
+    const doorW = Math.min(2.05, Math.max(1.2, wu1 - wu0 - 0.18));
     doorCutU0 = midU - doorW * 0.5 - 0.08;
     doorCutU1 = midU + doorW * 0.5 + 0.08;
     hasDoorCut = true;
   }
 
-  // Ground dark honed concrete water-table plinth (cleanly carved around entrance doorway!)
+  // Ground dark honed basalt water-table plinth (carved strictly around entrance doorway!)
   if (rect.v0 < 0.08) {
+    const addPlinthSeg = (ua: number, ub: number) => {
+      if (ub - ua < 0.05) return;
+      addWallLocalBox(batcher, dir, plane, 'plinth', ua, 0, -0.228, ub, 0.36, 0.055, 2.0);
+      addWallLocalBox(batcher, dir, plane, 'interiorWall', ua, 0.12, -0.268, ub, 0.36, -0.23, 2.4);
+    };
     if (hasDoorCut) {
-      if (doorCutU0 > rect.u0 + 0.05) {
-        addWallLocalBox(batcher, dir, plane, 'plinth', rect.u0, 0, -0.22, doorCutU0, 0.36, 0.055, 2.8);
-        addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, 0.08, -0.26, doorCutU0, 0.36, -0.22, 3.0);
-      }
-      if (rect.u1 > doorCutU1 + 0.05) {
-        addWallLocalBox(batcher, dir, plane, 'plinth', doorCutU1, 0, -0.22, rect.u1, 0.36, 0.055, 2.8);
-        addWallLocalBox(batcher, dir, plane, 'interiorWall', doorCutU1, 0.08, -0.26, rect.u1, 0.36, -0.22, 3.0);
-      }
+      addPlinthSeg(rect.u0, doorCutU0);
+      addPlinthSeg(doorCutU1, rect.u1);
     } else {
-      addWallLocalBox(batcher, dir, plane, 'plinth', rect.u0, 0, -0.22, rect.u1, 0.36, 0.055, 2.8);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, 0.08, -0.26, rect.u1, 0.36, -0.22, 3.0);
+      addPlinthSeg(rect.u0, rect.u1);
     }
   }
 
@@ -591,77 +621,69 @@ function buildFacadePatch(
     );
 
     if (storyH < 1.75) {
-      addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, y0, -0.22, rect.u1, y1, 0.03, uvScale);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, y0, -0.26, rect.u1, y1, -0.22, 3.0);
-      addWallLocalBox(batcher, dir, plane, 'accentMetal', rect.u0, y1 - 0.09, 0.03, rect.u1, y1, 0.08, 2.0);
+      addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, y0, -0.228, rect.u1, y1, 0.04, uvScale);
+      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, y0, -0.268, rect.u1, y1, -0.23, 2.4);
+      addWallLocalBox(batcher, dir, plane, 'facadeSecondary', rect.u0, y1 - 0.09, 0.042, rect.u1, y1 - 0.004, 0.095, 2.0);
       continue;
     }
 
-    const bottomSpandrelH = isGround ? 0.36 : style === 'brick-loft' ? 0.62 : 0.32;
-    const topSpandrelH = isGround ? 0.62 : style === 'contemporary' ? 0.44 : 0.52;
+    const bottomSpandrelH = isGround ? 0.36 : style === 'brick-loft' ? 0.64 : 0.42;
+    const topSpandrelH = isGround ? 0.62 : style === 'contemporary' ? 0.48 : 0.56;
     const winY0 = y0 + bottomSpandrelH;
     const winY1 = y1 - topSpandrelH;
 
-    // Lower spandrel band (upper floors) + clean interior plaster lining
+    // 1. Lower spandrel band (upper floors) + cleanly separated interior plaster backing
     if (!isGround) {
-      addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, y0, -0.22, rect.u1, winY0, 0.04, uvScale);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, y0 + 0.08, -0.26, rect.u1, winY0, -0.22, 3.0);
+      addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, y0, -0.228, rect.u1, winY0, 0.04, uvScale);
+      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, y0 + 0.12, -0.268, rect.u1, winY0, -0.23, 2.4);
     }
 
-    // Upper spandrel beam + dark reflective shadowbox band (contemporary) + interior plaster lining
-    if (!isGround && style === 'contemporary') {
-      // Sleek architectural slab edge + recessed dark mirror spandrel glass panel!
-      addWallLocalBox(batcher, dir, plane, 'facadePrimary', rect.u0, y1 - 0.14, -0.22, rect.u1, y1, 0.05, uvScale);
-      addWallLocalBox(batcher, dir, plane, 'spandrelGlass', rect.u0, winY1, -0.14, rect.u1, y1 - 0.14, -0.07, 2.0);
-      addWallLocalBox(batcher, dir, plane, 'concrete', rect.u0, winY1, -0.22, rect.u1, y1 - 0.14, -0.14, 3.0);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, winY1, -0.26, rect.u1, y1 - 0.22, -0.22, 3.0);
-    } else {
-      addWallLocalBox(
-        batcher,
-        dir,
-        plane,
-        isGround ? 'facadeSecondary' : 'facadePrimary',
-        rect.u0,
-        winY1,
-        -0.22,
-        rect.u1,
-        y1,
-        0.04,
-        uvScale
-      );
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, winY1, -0.26, rect.u1, y1 - 0.22, -0.22, 3.0);
-    }
-
-    // Crisp architectural drip-edge cornice & subtle recessed shadow reveal below it
-    const corniceProj = isGround || isTopOfPatch ? 0.11 : 0.075;
+    // 2. Upper spandrel beam (solid dressed stonework -> crisp shadows, ZERO glass-spandrel z-fighting!)
     addWallLocalBox(
       batcher,
       dir,
       plane,
-      'mullion',
+      isGround ? 'facadeSecondary' : 'facadePrimary',
       rect.u0,
-      y1 - 0.13,
-      0.04,
-      rect.u1,
-      y1 - 0.095,
-      0.06,
-      2.0
-    );
-    addWallLocalBox(
-      batcher,
-      dir,
-      plane,
-      isGround ? 'plinth' : 'facadeSecondary',
-      rect.u0,
-      y1 - 0.095,
-      0.04,
+      winY1,
+      -0.228,
       rect.u1,
       y1,
+      0.04,
+      uvScale
+    );
+    addWallLocalBox(batcher, dir, plane, 'interiorWall', rect.u0, winY1, -0.268, rect.u1, y1 - 0.24, -0.23, 2.4);
+
+    // 3. Sculpted two-step architectural belt-course / cornice strictly proud of +0.040 wall face (ZERO coplanar overlap!)
+    const corniceProj = isGround || isTopOfPatch ? 0.135 : 0.095;
+    addWallLocalBox(
+      batcher,
+      dir,
+      plane,
+      'facadeSecondary',
+      rect.u0,
+      y1 - 0.145,
+      0.042,
+      rect.u1,
+      y1 - 0.095,
+      0.075,
+      1.8
+    );
+    addWallLocalBox(
+      batcher,
+      dir,
+      plane,
+      'facadeSecondary',
+      rect.u0,
+      y1 - 0.095,
+      0.042,
+      rect.u1,
+      y1 - 0.004,
       corniceProj,
-      2.5
+      1.8
     );
 
-    // Iterate bays across this floor
+    // Iterate structural window bays
     for (let b = 0; b < numBays; b++) {
       const bu0 = rect.u0 + b * bayW;
       const bu1 = bu0 + bayW;
@@ -670,145 +692,103 @@ function buildFacadePatch(
       const leftPierW = b === 0 ? halfPier * 1.3 : halfPier;
       const rightPierW = b === numBays - 1 ? halfPier * 1.3 : halfPier;
       const pierMat = isGround ? 'plinth' : 'facadePrimary';
-      const pierProj = isGround ? 0.065 : style === 'travertine-bronze' ? 0.085 : 0.055;
 
-      // Left & right structural piers (strictly between winY0 and winY1 — zero overlap with spandrels!)
-      addWallLocalBox(batcher, dir, plane, pierMat, bu0, winY0, -0.22, bu0 + leftPierW, winY1, pierProj, uvScale);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', bu0, winY0, -0.26, bu0 + leftPierW, winY1, -0.22, 3.0);
+      // Left & right structural piers strictly between winY0 and winY1 (depth -0.228..+0.040)
+      addWallLocalBox(batcher, dir, plane, pierMat, bu0, winY0, -0.228, bu0 + leftPierW, winY1, 0.04, uvScale);
+      addWallLocalBox(batcher, dir, plane, 'interiorWall', bu0, winY0, -0.268, bu0 + leftPierW, winY1, -0.23, 2.4);
 
-      addWallLocalBox(batcher, dir, plane, pierMat, bu1 - rightPierW, winY0, -0.22, bu1, winY1, pierProj, uvScale);
-      addWallLocalBox(batcher, dir, plane, 'interiorWall', bu1 - rightPierW, winY0, -0.26, bu1, winY1, -0.22, 3.0);
+      addWallLocalBox(batcher, dir, plane, pierMat, bu1 - rightPierW, winY0, -0.228, bu1, winY1, 0.04, uvScale);
+      addWallLocalBox(batcher, dir, plane, 'interiorWall', bu1 - rightPierW, winY0, -0.268, bu1, winY1, -0.23, 2.4);
 
       const wu0 = bu0 + leftPierW;
       const wu1 = bu1 - rightPierW;
       const winW = wu1 - wu0;
       const winH = winY1 - winY0;
       if (winW < 0.45 || winH < 0.55) {
-        addWallLocalBox(batcher, dir, plane, pierMat, wu0, winY0, -0.22, wu1, winY1, 0.03, uvScale);
-        addWallLocalBox(batcher, dir, plane, 'interiorWall', wu0, winY0, -0.26, wu1, winY1, -0.22, 3.0);
+        addWallLocalBox(batcher, dir, plane, pierMat, wu0, winY0, -0.228, wu1, winY1, 0.04, uvScale);
+        addWallLocalBox(batcher, dir, plane, 'interiorWall', wu0, winY0, -0.268, wu1, winY1, -0.23, 2.4);
         continue;
       }
 
-      const frameT = 0.06;
-      const frameD0 = -0.22;
-      const frameD1 = -0.09;
-
       if (isEntranceBay) {
-        // Grand Z-Fighting-Free Double-Height Glass Entrance Portal + Cantilevered Canopy!
         buildEntrancePortal(batcher, dir, plane, wu0, wu1, winY0, winY1, y1);
         continue;
       }
 
-      // Perimeter recessed dark anodized window frame (head, sill, jambs — non-overlapping!)
-      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0, frameD0, wu1, winY0 + frameT, frameD1, 2.0);
-      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY1 - frameT, frameD0, wu1, winY1, frameD1, 2.0);
-      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0 + frameT, frameD0, wu0 + frameT, winY1 - frameT, frameD1, 2.0);
-      addWallLocalBox(batcher, dir, plane, 'mullion', wu1 - frameT, winY0 + frameT, frameD0, wu1, winY1 - frameT, frameD1, 2.0);
+      // Perimeter dark anodized window frame strictly recessed at depth [-0.21, -0.10]
+      const frameT = 0.065;
+      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0, -0.21, wu1, winY0 + frameT, -0.10, 1.8);
+      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY1 - frameT, -0.21, wu1, winY1, -0.10, 1.8);
+      addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0 + frameT, -0.21, wu0 + frameT, winY1 - frameT, -0.10, 1.8);
+      addWallLocalBox(batcher, dir, plane, 'mullion', wu1 - frameT, winY0 + frameT, -0.21, wu1, winY1 - frameT, -0.10, 1.8);
 
-      // Sloped architectural window sill projecting cleanly from the lower spandrel
+      // Projecting dressed-stone window sill strictly proud of +0.040 wall face (ZERO coplanar overlap!)
       if (!isGround) {
         addWallLocalBox(
           batcher,
           dir,
           plane,
-          style === 'brick-loft' ? 'facadeSecondary' : 'accentMetal',
-          wu0 - 0.02,
-          winY0 - 0.055,
-          -0.09,
-          wu1 + 0.02,
+          'facadeSecondary',
+          wu0 - 0.04,
+          winY0 - 0.07,
+          0.042,
+          wu1 + 0.04,
           winY0,
-          0.085,
-          2.0
+          0.11,
+          1.8
         );
       }
 
-      // Clear untextured exterior-reflective glass pane strictly inside the perimeter frame
-      const gx0 = wu0 + frameT + 0.002;
-      const gx1 = wu1 - frameT - 0.002;
-      const gy0 = winY0 + frameT + 0.002;
-      const gy1 = winY1 - frameT - 0.002;
-      const glassDepth = -0.145;
-
-      addWallQuad(batcher, dir, plane, 'glass', gx0, gy0, gx1, gy1, glassDepth);
+      const gx0 = wu0 + frameT;
+      const gx1 = wu1 - frameT;
+      const gy0 = winY0 + frameT;
+      const gy1 = winY1 - frameT;
 
       if (isGround) {
-        // Ground-floor storefront transom & vertical mullion caps proud in front of glass (zero z-fighting!)
         const transomY = winY0 + Math.min(winH * 0.68, 2.45);
-        addWallLocalBox(batcher, dir, plane, 'mullion', gx0, transomY - 0.028, -0.14, gx1, transomY + 0.028, -0.06, 2.0);
-        if (winW > 1.7) {
-          const midU = (wu0 + wu1) * 0.5;
-          addWallLocalBox(batcher, dir, plane, 'mullion', midU - 0.024, gy0, -0.14, midU + 0.024, gy1, -0.06, 2.0);
+        const vSplits = winW > 1.6 ? [(wu0 + wu1) * 0.5] : [];
+        buildWindowGlassGrid(batcher, dir, plane, gx0, gx1, gy0, gy1, vSplits, [transomY], 0.025);
+      } else if (style === 'contemporary') {
+        const vSplits = winW > 1.45 ? [(wu0 + wu1) * 0.5] : [];
+        const hSplits = winH > 2.2 ? [winY0 + winH * 0.72] : [];
+        buildWindowGlassGrid(batcher, dir, plane, gx0, gx1, gy0, gy1, vSplits, hSplits, 0.022);
+        // Dressed pale stone architectural lintel + slim accent sunshade blade strictly proud of wall
+        addWallLocalBox(batcher, dir, plane, 'facadeSecondary', wu0 - 0.04, winY1, 0.042, wu1 + 0.04, winY1 + 0.12, 0.09, 1.8);
+        addWallLocalBox(batcher, dir, plane, 'accentMetal', wu0 - 0.02, winY1 - 0.025, 0.042, wu1 + 0.02, winY1 + 0.02, 0.24, 1.8);
+      } else if (style === 'brick-loft') {
+        const vPanes = winW > 1.6 ? 3 : 2;
+        const vSplits: number[] = [];
+        for (let k = 1; k < vPanes; k++) vSplits.push(wu0 + (winW * k) / vPanes);
+        const hSplits = [winY0 + winH * 0.52];
+        buildWindowGlassGrid(batcher, dir, plane, gx0, gx1, gy0, gy1, vSplits, hSplits, 0.018);
+
+        // Classic dressed limestone window lintel (proud of brick face, like new-york.jpg!)
+        addWallLocalBox(batcher, dir, plane, 'facadeSecondary', wu0 - 0.07, winY1, 0.042, wu1 + 0.07, winY1 + 0.17, 0.095, 1.8);
+
+        // Dark wrought-iron Juliet balcony railing on alternating bays
+        if ((b + floorNumber) % 2 === 0 && winH > 1.5) {
+          const railTop = winY0 + 0.92;
+          addWallLocalBox(batcher, dir, plane, 'mullion', wu0, railTop - 0.032, 0.07, wu1, railTop, 0.115, 1.8);
+          addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0 + 0.03, 0.07, wu1, winY0 + 0.065, 0.115, 1.8);
+          const pickets = Math.max(3, Math.floor(winW / 0.22));
+          for (let p = 0; p <= pickets; p++) {
+            const pu = wu0 + (winW * p) / pickets;
+            addWallLocalBox(batcher, dir, plane, 'mullion', pu - 0.009, winY0 + 0.065, 0.082, pu + 0.009, railTop - 0.032, 0.104, 1.8);
+          }
         }
       } else {
-        // Style-specific upper-floor exterior mullion caps, louvers, fins & Juliet balconies
-        if (style === 'contemporary') {
-          if (winW > 1.45) {
-            const midU = (wu0 + wu1) * 0.5;
-            addWallLocalBox(batcher, dir, plane, 'mullion', midU - 0.022, gy0, -0.14, midU + 0.022, gy1, -0.055, 2.0);
-          }
-          // Sleek champagne-bronze brise-soleil sunshade eyebrow blade
-          addWallLocalBox(
-            batcher,
-            dir,
-            plane,
-            'accentMetal',
-            wu0 - 0.02,
-            winY1 - 0.035,
-            -0.02,
-            wu1 + 0.02,
-            winY1 + 0.025,
-            0.26,
-            2.0
-          );
-        } else if (style === 'brick-loft') {
-          const vPanes = winW > 1.6 ? 3 : 2;
-          for (let k = 1; k < vPanes; k++) {
-            const mu = wu0 + (winW * k) / vPanes;
-            addWallLocalBox(batcher, dir, plane, 'mullion', mu - 0.018, gy0, -0.14, mu + 0.018, gy1, -0.085, 2.0);
-          }
-          const transomY = winY0 + winH * 0.52;
-          addWallLocalBox(batcher, dir, plane, 'mullion', gx0, transomY - 0.018, -0.14, gx1, transomY + 0.018, -0.085, 2.0);
-          // Limestone lintel proud above window head
-          addWallLocalBox(
-            batcher,
-            dir,
-            plane,
-            'facadeSecondary',
-            wu0 - 0.06,
-            winY1,
-            0.04,
-            wu1 + 0.06,
-            winY1 + 0.16,
-            0.085,
-            2.0
-          );
-          // Slim black iron Juliet balcony railing on alternating bays
-          if ((b + floorNumber) % 2 === 0 && winH > 1.5) {
-            const railTop = winY0 + 0.92;
-            addWallLocalBox(batcher, dir, plane, 'mullion', wu0, railTop - 0.035, 0.06, wu1, railTop, 0.11, 2.0);
-            addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0 + 0.03, 0.06, wu1, winY0 + 0.07, 0.11, 2.0);
-            const pickets = Math.max(3, Math.floor(winW / 0.24));
-            for (let p = 0; p <= pickets; p++) {
-              const pu = wu0 + (winW * p) / pickets;
-              addWallLocalBox(batcher, dir, plane, 'mullion', pu - 0.01, winY0 + 0.07, 0.072, pu + 0.01, railTop - 0.035, 0.098, 2.0);
-            }
-          }
-        } else {
-          // travertine-bronze: deep vertical bronze architectural fins + proud central bronze mullion
-          const midU = (wu0 + wu1) * 0.5;
-          addWallLocalBox(batcher, dir, plane, 'mullion', midU - 0.025, gy0, -0.14, midU + 0.025, gy1, -0.055, 2.0);
-          addWallLocalBox(batcher, dir, plane, 'accentMetal', wu0, winY0, 0.04, wu0 + 0.045, winY1, 0.24, 2.0);
-          addWallLocalBox(batcher, dir, plane, 'accentMetal', wu1 - 0.045, winY0, 0.04, wu1, winY1, 0.24, 2.0);
-        }
+        // travertine-bronze: deep fluted bronze fins + clean split glass panes
+        const vSplits = [(wu0 + wu1) * 0.5];
+        buildWindowGlassGrid(batcher, dir, plane, gx0, gx1, gy0, gy1, vSplits, [], 0.024);
+        addWallLocalBox(batcher, dir, plane, 'accentMetal', wu0, winY0, 0.042, wu0 + 0.048, winY1, 0.22, 1.8);
+        addWallLocalBox(batcher, dir, plane, 'accentMetal', wu1 - 0.048, winY0, 0.042, wu1, winY1, 0.22, 1.8);
       }
     }
   }
 }
 
 /**
- * Z-Fighting-Free Grand Architectural Main Entrance Portal:
- * Every frame bar, glass leaf, threshold step, pull handle, and canopy member occupies
- * strictly disjoint 3D space opening cleanly into the real hollow 3D ground lobby!
+ * 100% Z-Fighting-Free Grand Architectural Main Entrance Portal.
  */
 function buildEntrancePortal(
   batcher: MaterialGeometryBatcher,
@@ -822,56 +802,38 @@ function buildEntrancePortal(
 ): void {
   const midU = (wu0 + wu1) * 0.5;
   const doorH = Math.min(2.65, winY1 - 0.42);
-  const doorW = Math.min(2.1, Math.max(1.2, wu1 - wu0 - 0.18));
+  const doorW = Math.min(2.05, Math.max(1.2, wu1 - wu0 - 0.18));
   const du0 = midU - doorW * 0.5;
   const du1 = midU + doorW * 0.5;
   const jambT = 0.075;
   const headT = 0.075;
 
-  // 1. Outer bronze architectural portal frame (strictly disjoint jambs & header)
-  addWallLocalBox(batcher, dir, plane, 'accentMetal', du0 - jambT, 0.0, -0.22, du0, doorH, 0.045, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'accentMetal', du1, 0.0, -0.22, du1 + jambT, doorH, 0.045, 2.0);
-  addWallLocalBox(
-    batcher,
-    dir,
-    plane,
-    'accentMetal',
-    du0 - jambT,
-    doorH,
-    -0.22,
-    du1 + jambT,
-    doorH + headT,
-    0.045,
-    2.0
-  );
+  // Outer bronze portal frame
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', du0 - jambT, 0.0, -0.21, du0, doorH, 0.048, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', du1, 0.0, -0.21, du1 + jambT, doorH, 0.048, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', du0 - jambT, doorH, -0.21, du1 + jambT, doorH + headT, 0.048, 1.8);
 
-  // 2. Perimeter upper bay frame above door transom
-  const frameT = 0.055;
-  addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY1 - frameT, -0.22, wu1, winY1, -0.09, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0, -0.22, wu0 + frameT, winY1 - frameT, -0.09, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', wu1 - frameT, winY0, -0.22, wu1, winY1 - frameT, -0.09, 2.0);
+  // Upper bay perimeter frame
+  const frameT = 0.06;
+  addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY1 - frameT, -0.21, wu1, winY1, -0.10, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', wu0, winY0, -0.21, wu0 + frameT, winY1 - frameT, -0.10, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', wu1 - frameT, winY0, -0.21, wu1, winY1 - frameT, -0.10, 1.8);
 
-  // 3. Double glass door leaves: bottom kickplates, top rails, center stile & SEPARATE glass panes
+  // Double door leaves: bottom kickplates, top rails, center stile & strictly separate glass panes at -0.165
   const kickH = 0.16;
   const topRailH = 0.07;
-  const stileHalf = 0.022;
-  // Left & right leaf bottom kickplates + top rails
-  addWallLocalBox(batcher, dir, plane, 'mullion', du0 + 0.006, 0.02, -0.155, midU - stileHalf, kickH, -0.105, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', midU + stileHalf, 0.02, -0.155, du1 - 0.006, kickH, -0.105, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', du0 + 0.006, doorH - topRailH, -0.155, midU - stileHalf, doorH - 0.004, -0.105, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', midU + stileHalf, doorH - topRailH, -0.155, du1 - 0.006, doorH - 0.004, -0.105, 2.0);
-  // Center vertical meeting stile
-  addWallLocalBox(batcher, dir, plane, 'mullion', midU - stileHalf, 0.02, -0.155, midU + stileHalf, doorH - 0.004, -0.105, 2.0);
+  const stileHalf = 0.024;
+  addWallLocalBox(batcher, dir, plane, 'mullion', du0 + 0.004, 0.01, -0.195, midU - stileHalf, kickH, -0.11, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', midU + stileHalf, 0.01, -0.195, du1 - 0.004, kickH, -0.11, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', du0 + 0.004, doorH - topRailH, -0.195, midU - stileHalf, doorH - 0.002, -0.11, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', midU + stileHalf, doorH - topRailH, -0.195, du1 - 0.004, doorH - 0.002, -0.11, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', midU - stileHalf, 0.01, -0.195, midU + stileHalf, doorH - 0.002, -0.11, 1.8);
 
-  // Clean separate exterior-reflective door leaf glass panes (ZERO overlap with stiles/plinth!)
-  const glassD = -0.13;
-  addWallQuad(batcher, dir, plane, 'glass', du0 + 0.008, kickH + 0.002, midU - stileHalf - 0.002, doorH - topRailH - 0.002, glassD);
-  addWallQuad(batcher, dir, plane, 'glass', midU + stileHalf + 0.002, kickH + 0.002, du1 - 0.008, doorH - topRailH - 0.002, glassD);
-
-  // Upper transom glass pane above doorway
+  const glassD = -0.165;
+  addWallQuad(batcher, dir, plane, 'glass', du0 + 0.006, kickH + 0.002, midU - stileHalf - 0.002, doorH - topRailH - 0.002, glassD);
+  addWallQuad(batcher, dir, plane, 'glass', midU + stileHalf + 0.002, kickH + 0.002, du1 - 0.006, doorH - topRailH - 0.002, glassD);
   addWallQuad(batcher, dir, plane, 'glass', wu0 + frameT + 0.002, doorH + headT + 0.002, wu1 - frameT - 0.002, winY1 - frameT - 0.002, glassD);
 
-  // Sidelight glass panes if bay is wider than doorway
   if (du0 - jambT > wu0 + frameT + 0.08) {
     addWallQuad(batcher, dir, plane, 'glass', wu0 + frameT + 0.002, winY0 + 0.002, du0 - jambT - 0.002, doorH, glassD);
   }
@@ -879,67 +841,46 @@ function buildEntrancePortal(
     addWallQuad(batcher, dir, plane, 'glass', du1 + jambT + 0.002, winY0 + 0.002, wu1 - frameT - 0.002, doorH, glassD);
   }
 
-  // Brushed-bronze vertical architectural pull handles strictly proud of door glass
-  addWallLocalBox(batcher, dir, plane, 'accentMetal', midU - 0.13, 0.90, -0.095, midU - 0.095, 1.58, -0.04, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'accentMetal', midU + 0.095, 0.90, -0.095, midU + 0.13, 1.58, -0.04, 2.0);
+  // Vertical bronze pull handles strictly proud of door glass
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', midU - 0.13, 0.90, -0.095, midU - 0.095, 1.56, -0.04, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', midU + 0.095, 0.90, -0.095, midU + 0.13, 1.56, -0.04, 1.8);
 
-  // 4. Cantilevered steel-and-cedar entrance canopy (cleanly separated from spandrel)
+  // Cantilevered steel-and-cedar entrance canopy strictly outside +0.055
   const canopyY = Math.min(storyTopY - 0.42, Math.max(doorH + 0.35, 3.12));
   const canopyU0 = wu0 - 0.42;
   const canopyU1 = wu1 + 0.42;
-  const canopyProj = 2.15;
+  const canopyProj = 2.05;
 
-  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, 0.055, canopyU1, canopyY + 0.15, 0.18, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, canopyProj - 0.14, canopyU1, canopyY + 0.15, canopyProj, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, 0.18, canopyU0 + 0.14, canopyY + 0.15, canopyProj - 0.14, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU1 - 0.14, canopyY, 0.18, canopyU1, canopyY + 0.15, canopyProj - 0.14, 2.0);
+  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, 0.055, canopyU1, canopyY + 0.15, 0.18, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, canopyProj - 0.14, canopyU1, canopyY + 0.15, canopyProj, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU0, canopyY, 0.18, canopyU0 + 0.14, canopyY + 0.15, canopyProj - 0.14, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'mullion', canopyU1 - 0.14, canopyY, 0.18, canopyU1, canopyY + 0.15, canopyProj - 0.14, 1.8);
 
-  // Warm recessed cedar soffit + metallic fascia cap
-  addWallLocalBox(batcher, dir, plane, 'soffitWood', canopyU0 + 0.14, canopyY + 0.02, 0.18, canopyU1 - 0.14, canopyY + 0.12, canopyProj - 0.14, 2.0);
-  addWallLocalBox(batcher, dir, plane, 'accentMetal', canopyU0 - 0.01, canopyY + 0.15, 0.055, canopyU1 + 0.01, canopyY + 0.19, canopyProj + 0.03, 2.0);
+  addWallLocalBox(batcher, dir, plane, 'soffitWood', canopyU0 + 0.14, canopyY + 0.02, 0.18, canopyU1 - 0.14, canopyY + 0.12, canopyProj - 0.14, 1.8);
+  addWallLocalBox(batcher, dir, plane, 'accentMetal', canopyU0 - 0.01, canopyY + 0.15, 0.055, canopyU1 + 0.01, canopyY + 0.19, canopyProj + 0.03, 1.8);
 
-  // Warm recessed LED canopy downlights
   const lights = 3;
   for (let i = 0; i < lights; i++) {
     const lu = canopyU0 + 0.55 + ((canopyU1 - canopyU0 - 1.1) * i) / (lights - 1);
-    addWallLocalBox(
-      batcher,
-      dir,
-      plane,
-      'emissiveWarm',
-      lu - 0.075,
-      canopyY - 0.005,
-      canopyProj * 0.48,
-      lu + 0.075,
-      canopyY + 0.02,
-      canopyProj * 0.48 + 0.15,
-      1.0
-    );
+    addWallLocalBox(batcher, dir, plane, 'emissiveWarm', lu - 0.07, canopyY - 0.008, canopyProj * 0.48, lu + 0.07, canopyY + 0.015, canopyProj * 0.48 + 0.14, 1.0);
   }
 
-  // 5. Honed granite threshold entrance step strictly OUTSIDE the wall plinth (depth >= 0.065 -> ZERO z-fighting!)
-  addWallLocalBox(
-    batcher,
-    dir,
-    plane,
-    'plinth',
-    du0 - 0.42,
-    0.0,
-    0.065,
-    du1 + 0.42,
-    0.11,
-    1.32,
-    2.4
-  );
+  // Honed threshold entrance step strictly outside plinth (depth >= 0.065 -> ZERO z-fighting!)
+  addWallLocalBox(batcher, dir, plane, 'plinth', du0 - 0.42, 0.0, 0.065, du1 + 0.42, 0.10, 1.25, 2.0);
 }
 
 /**
- * Places crisp vertical architectural corner quoins at exterior junctions (strictly proud of cladding -> zero z-fighting).
+ * Dressed architectural corner quoins strictly proud of +0.040 wall face (zero z-fighting).
  */
-function buildCornerPiers(batcher: MaterialGeometryBatcher, wallPatches: MergedExteriorPatch[]): void {
+function buildCornerPiers(
+  batcher: MaterialGeometryBatcher,
+  wallPatches: MergedExteriorPatch[],
+  style: ArchitecturalStyle
+): void {
   const xWalls = wallPatches.filter((p) => p.dir === '+x' || p.dir === '-x');
   const zWalls = wallPatches.filter((p) => p.dir === '+z' || p.dir === '-z');
   const seen = new Set<string>();
+  const mat = style === 'travertine-bronze' ? 'facadePrimary' : 'facadeSecondary';
 
   for (const xw of xWalls) {
     const cx = xw.plane;
@@ -959,8 +900,8 @@ function buildCornerPiers(batcher: MaterialGeometryBatcher, wallPatches: MergedE
       if (seen.has(key)) continue;
       seen.add(key);
 
-      const r = 0.098;
-      batcher.addBox('facadePrimary', cx - r, y0, cz - r, cx + r, y1, cz + r, 3.0);
+      const r = 0.095;
+      batcher.addBox(mat, cx - r, y0 + 0.004, cz - r, cx + r, y1 - 0.004, cz + r, 2.0);
     }
   }
 }
@@ -1014,8 +955,8 @@ function buildRoofOrTerrace(
   const abutsTallerWall = openPerim < totalPerim - 0.2;
   const isTerrace = abutsTallerWall || y < maxBuildingY - 0.5;
 
-  // Watertight roof deck slab cleanly sitting atop the interior ceiling slab
-  batcher.addBox(isTerrace ? 'terracePaver' : 'roofDeck', x0, y - 0.04, z0, x1, y + 0.08, z1, 2.6);
+  // Strictly above interiorCeiling (y - 0.02) -> ZERO roof z-fighting!
+  batcher.addBox(isTerrace ? 'terracePaver' : 'roofDeck', x0, y + 0.004, z0, x1, y + 0.10, z1, 2.0);
 
   const addEdge = (
     axis: 'x' | 'z',
@@ -1030,23 +971,16 @@ function buildRoofOrTerrace(
       const cA = fixedCoord - inwardSign * projOut;
       const cB = fixedCoord + inwardSign * thick;
       if (axis === 'x') {
-        batcher.addBox(mat, seg.a, y + h0, Math.min(cA, cB), seg.b, y + h1, Math.max(cA, cB), 2.5);
+        batcher.addBox(mat, seg.a, y + h0, Math.min(cA, cB), seg.b, y + h1, Math.max(cA, cB), 2.0);
       } else {
-        batcher.addBox(mat, Math.min(cA, cB), y + h0, seg.a, Math.max(cA, cB), y + h1, seg.b, 2.5);
+        batcher.addBox(mat, Math.min(cA, cB), y + h0, seg.a, Math.max(cA, cB), y + h1, seg.b, 2.0);
       }
     };
 
     if (isTerrace) {
-      placeBar('facadeSecondary', 0.24, 0.08, 0.34, 0.03);
+      placeBar('facadeSecondary', 0.24, 0.10, 0.34, 0.03);
       placeBar('accentMetal', 0.28, 0.34, 0.38, 0.05);
       const glassC = fixedCoord + inwardSign * 0.12;
-      if (axis === 'x') {
-        batcher.addBox('balustradeGlass', seg.a + 0.04, y + 0.38, glassC - 0.012, seg.b - 0.04, y + 1.14, glassC + 0.012, 1.0);
-        batcher.addBox('accentMetal', seg.a, y + 1.14, glassC - 0.03, seg.b, y + 1.19, glassC + 0.03, 2.0);
-      } else {
-        batcher.addBox('balustradeGlass', glassC - 0.012, y + 0.38, seg.a + 0.04, glassC + 0.012, y + 1.14, seg.b - 0.04, 1.0);
-        batcher.addBox('accentMetal', glassC - 0.03, y + 1.14, seg.a, glassC + 0.03, y + 1.19, seg.b, 2.0);
-      }
       const posts = Math.max(2, Math.ceil(len / 2.2) + 1);
       for (let i = 0; i < posts; i++) {
         const p = seg.a + (len * i) / (posts - 1);
@@ -1055,10 +989,24 @@ function buildRoofOrTerrace(
         } else {
           batcher.addBox('mullion', glassC - 0.026, y + 0.38, p - 0.022, glassC + 0.026, y + 1.14, p + 0.022, 1.0);
         }
+        // Separate balustrade glass segments strictly between posts (ZERO z-fighting!)
+        if (i < posts - 1) {
+          const nextP = seg.a + (len * (i + 1)) / (posts - 1);
+          if (axis === 'x') {
+            batcher.addBox('balustradeGlass', p + 0.026, y + 0.385, glassC - 0.008, nextP - 0.026, y + 1.135, glassC + 0.008, 1.0);
+          } else {
+            batcher.addBox('balustradeGlass', glassC - 0.008, y + 0.385, p + 0.026, glassC + 0.008, y + 1.135, nextP - 0.026, 1.0);
+          }
+        }
+      }
+      if (axis === 'x') {
+        batcher.addBox('accentMetal', seg.a, y + 1.14, glassC - 0.03, seg.b, y + 1.19, glassC + 0.03, 1.8);
+      } else {
+        batcher.addBox('accentMetal', glassC - 0.03, y + 1.14, seg.a, glassC + 0.03, y + 1.19, seg.b, 1.8);
       }
     } else {
-      placeBar('facadePrimary', 0.34, 0.08, 0.94, 0.04);
-      placeBar('accentMetal', 0.42, 0.94, 1.03, 0.08);
+      placeBar('facadePrimary', 0.34, 0.10, 0.92, 0.04);
+      placeBar('facadeSecondary', 0.42, 0.92, 1.02, 0.08);
     }
   };
 
@@ -1090,8 +1038,8 @@ function buildRoofOrTerrace(
       const [px, pz] = planterSpots[idx];
       const pw = Math.min(1.4, safeW * 0.35);
       const pd = Math.min(0.9, safeD * 0.55);
-      batcher.addBox('concrete', px - pw * 0.5, y + 0.08, pz - pd * 0.5, px + pw * 0.5, y + 0.56, pz + pd * 0.5, 2.0);
-      batcher.addBox('bark', px - pw * 0.42, y + 0.52, pz - pd * 0.42, px + pw * 0.42, y + 0.58, pz + pd * 0.42, 1.0);
+      batcher.addBox('concrete', px - pw * 0.5, y + 0.10, pz - pd * 0.5, px + pw * 0.5, y + 0.56, pz + pd * 0.5, 1.8);
+      batcher.addBox('bark', px - pw * 0.42, y + 0.54, pz - pd * 0.42, px + pw * 0.42, y + 0.58, pz + pd * 0.42, 1.0);
       foliageBatcher.addPlanterShrub(
         px,
         y + 0.56,
@@ -1103,45 +1051,54 @@ function buildRoofOrTerrace(
     }
   } else {
     if (safeW >= 3.6 && safeD >= 3.6) {
-      const phW = Math.min(4.6, safeW * 0.42);
-      const phD = Math.min(3.8, safeD * 0.42);
-      const phH = 2.35;
+      const phW = Math.min(4.4, safeW * 0.4);
+      const phD = Math.min(3.6, safeD * 0.4);
+      const phH = 2.25;
       const phX0 = safeX0 + 0.3;
       const phZ0 = safeZ0 + 0.3;
       const phX1 = phX0 + phW;
       const phZ1 = phZ0 + phD;
 
-      batcher.addBox('concrete', phX0, y + 0.08, phZ0, phX1, y + phH, phZ1, 3.0);
-      batcher.addBox('accentMetal', phX0 - 0.08, y + phH, phZ0 - 0.08, phX1 + 0.08, y + phH + 0.12, phZ1 + 0.08, 2.0);
+      batcher.addBox('concrete', phX0, y + 0.10, phZ0, phX1, y + phH, phZ1, 2.2);
+      batcher.addBox('facadeSecondary', phX0 - 0.08, y + phH, phZ0 - 0.08, phX1 + 0.08, y + phH + 0.12, phZ1 + 0.08, 1.8);
 
       const slats = 5;
       for (let i = 0; i < slats; i++) {
-        const sy = y + 0.55 + i * 0.32;
-        batcher.addBox('mullion', phX0 + 0.35, sy, phZ1, phX1 - 0.35, sy + 0.10, phZ1 + 0.08, 1.0);
+        const sy = y + 0.55 + i * 0.30;
+        batcher.addBox('mullion', phX0 + 0.35, sy, phZ1 + 0.01, phX1 - 0.35, sy + 0.09, phZ1 + 0.09, 1.0);
       }
 
       if (safeW - phW >= 2.2) {
         const hx0 = phX1 + 0.6;
-        const hx1 = Math.min(safeX1 - 0.2, hx0 + 1.65);
+        const hx1 = Math.min(safeX1 - 0.2, hx0 + 1.6);
         const hz0 = phZ0 + 0.2;
-        const hz1 = hz0 + Math.min(1.4, phD * 0.7);
+        const hz1 = hz0 + Math.min(1.35, phD * 0.7);
         if (hx1 - hx0 >= 0.9 && hz1 - hz0 >= 0.8) {
-          batcher.addBox('facadeSecondary', hx0, y + 0.08, hz0, hx1, y + 1.05, hz1, 2.0);
-          batcher.addCylinder('mullion', (hx0 + hx1) * 0.5, y + 1.05, y + 1.18, (hz0 + hz1) * 0.5, 0.34, 0.34, 14);
+          batcher.addBox('facadeSecondary', hx0, y + 0.10, hz0, hx1, y + 1.0, hz1, 1.8);
+          batcher.addCylinder('mullion', (hx0 + hx1) * 0.5, y + 1.0, y + 1.14, (hz0 + hz1) * 0.5, 0.32, 0.32, 14);
         }
       }
 
+      // Z-fighting-free recessed skylight (separated frame curb, glass & proud mullions!)
       if (safeD - phD >= 2.2) {
         const sx0 = safeX0 + safeW * 0.45;
-        const sx1 = Math.min(safeX1 - 0.3, sx0 + Math.min(3.6, safeW * 0.48));
+        const sx1 = Math.min(safeX1 - 0.3, sx0 + Math.min(3.5, safeW * 0.46));
         const sz0 = phZ1 + 0.7;
-        const sz1 = Math.min(safeZ1 - 0.3, sz0 + Math.min(2.4, safeD - phD - 1.0));
+        const sz1 = Math.min(safeZ1 - 0.3, sz0 + Math.min(2.3, safeD - phD - 1.0));
         if (sx1 - sx0 >= 1.5 && sz1 - sz0 >= 1.2) {
-          batcher.addBox('mullion', sx0, y + 0.08, sz0, sx1, y + 0.42, sz1, 2.0);
-          batcher.addBox('interiorCeiling', sx0 + 0.12, y + 0.14, sz0 + 0.12, sx1 - 0.12, y + 0.38, sz1 - 0.12, 2.0);
-          batcher.addBox('glass', sx0 + 0.08, y + 0.42, sz0 + 0.08, sx1 - 0.08, y + 0.47, sz1 - 0.08, 1.0);
           const midX = (sx0 + sx1) * 0.5;
-          batcher.addBox('mullion', midX - 0.03, y + 0.42, sz0, midX + 0.03, y + 0.50, sz1, 1.0);
+          // 4 hollow perimeter skylight curb bars
+          batcher.addBox('mullion', sx0, y + 0.10, sz0, sx1, y + 0.40, sz0 + 0.10, 1.8);
+          batcher.addBox('mullion', sx0, y + 0.10, sz1 - 0.10, sx1, y + 0.40, sz1, 1.8);
+          batcher.addBox('mullion', sx0, y + 0.10, sz0 + 0.10, sx0 + 0.10, y + 0.40, sz1 - 0.10, 1.8);
+          batcher.addBox('mullion', sx1 - 0.10, y + 0.10, sz0 + 0.10, sx1, y + 0.40, sz1 - 0.10, 1.8);
+          // Shadowed interior well floor
+          batcher.addBox('interiorFloor', sx0 + 0.10, y + 0.11, sz0 + 0.10, sx1 - 0.10, y + 0.18, sz1 - 0.10, 2.0);
+          // Separate left/right glass skylight panes at y + 0.36..0.38
+          batcher.addBox('glass', sx0 + 0.105, y + 0.36, sz0 + 0.105, midX - 0.035, y + 0.385, sz1 - 0.105, 1.0);
+          batcher.addBox('glass', midX + 0.035, y + 0.36, sz0 + 0.105, sx1 - 0.105, y + 0.385, sz1 - 0.105, 1.0);
+          // Central skylight mullion cap strictly above/between panes
+          batcher.addBox('mullion', midX - 0.032, y + 0.34, sz0 + 0.02, midX + 0.032, y + 0.45, sz1 - 0.02, 1.0);
         }
       }
 
@@ -1156,11 +1113,11 @@ function buildRoofOrTerrace(
           for (let c = 0; c < cols; c++) {
             const px = arrayX0 + c * 1.55 + 0.7;
             const pz = arrayZ0 + r * 1.35 + 0.6;
-            batcher.addBox('mullion', px - 0.5, y + 0.08, pz - 0.32, px - 0.44, y + 0.46, pz - 0.26, 1.0);
-            batcher.addBox('mullion', px + 0.44, y + 0.08, pz - 0.32, px + 0.5, y + 0.46, pz - 0.26, 1.0);
-            batcher.addBox('mullion', px - 0.5, y + 0.08, pz + 0.26, px - 0.44, y + 0.24, pz + 0.32, 1.0);
-            batcher.addBox('mullion', px + 0.44, y + 0.08, pz + 0.26, px + 0.5, y + 0.24, pz + 0.32, 1.0);
-            batcher.addBox('solarPanel', px - 0.64, y + 0.32, pz - 0.42, px + 0.64, y + 0.38, pz + 0.42, 1.0);
+            batcher.addBox('mullion', px - 0.5, y + 0.10, pz - 0.32, px - 0.44, y + 0.36, pz - 0.26, 1.0);
+            batcher.addBox('mullion', px + 0.44, y + 0.10, pz - 0.32, px + 0.5, y + 0.36, pz - 0.26, 1.0);
+            batcher.addBox('mullion', px - 0.5, y + 0.10, pz + 0.26, px - 0.44, y + 0.28, pz + 0.32, 1.0);
+            batcher.addBox('mullion', px + 0.44, y + 0.10, pz + 0.26, px + 0.5, y + 0.28, pz + 0.32, 1.0);
+            batcher.addBox('solarPanel', px - 0.64, y + 0.36, pz - 0.42, px + 0.64, y + 0.41, pz + 0.42, 1.0);
           }
         }
       }
@@ -1179,9 +1136,9 @@ function buildCantileverSoffit(
   const w = x1 - x0;
   const d = z1 - z0;
 
-  batcher.addBox('mullion', x0, y - 0.05, z0, x1, y + 0.08, z1, 2.5);
+  batcher.addBox('mullion', x0, y - 0.05, z0, x1, y + 0.01, z1, 2.0);
   const inset = Math.min(0.24, w * 0.15, d * 0.15);
-  batcher.addBox('soffitWood', x0 + inset, y - 0.075, z0 + inset, x1 - inset, y - 0.02, z1 - inset, 2.2);
+  batcher.addBox('soffitWood', x0 + inset, y - 0.08, z0 + inset, x1 - inset, y - 0.052, z1 - inset, 1.8);
 
   const cols = Math.max(1, Math.floor((w - inset * 2) / 2.8));
   const rows = Math.max(1, Math.floor((d - inset * 2) / 2.8));
@@ -1189,11 +1146,10 @@ function buildCantileverSoffit(
     for (let j = 0; j < rows; j++) {
       const lx = x0 + inset + ((w - inset * 2) * (i + 0.5)) / cols;
       const lz = z0 + inset + ((d - inset * 2) * (j + 0.5)) / rows;
-      batcher.addBox('emissiveWarm', lx - 0.085, y - 0.09, lz - 0.085, lx + 0.085, y - 0.065, lz + 0.085, 1.0);
+      batcher.addBox('emissiveWarm', lx - 0.08, y - 0.095, lz - 0.08, lx + 0.08, y - 0.081, lz + 0.08, 1.0);
     }
   }
 
-  // Only place structural pilotis under substantial elevated cantilevers (y >= 2.2m — never stubby piles!)
   if (showColumns && y >= 2.2 && Math.max(w, d) >= 3.2 && Math.min(w, d) >= 2.0) {
     const margin = Math.min(0.85, Math.min(w, d) * 0.25);
     const colPositions: [number, number][] = [
@@ -1236,6 +1192,11 @@ function buildCantileverSoffit(
   }
 }
 
+/**
+ * Calm pale urban street, white crosswalk stripes & dashed lane lines, crisp limestone
+ * sidewalk plinth (matching ProdceduralBuildingsThreeJS app.jpg / city.jpg / new-york.jpg!)
+ * and tasteful corner street trees that never block the entrance!
+ */
 function buildSiteContext(
   batcher: MaterialGeometryBatcher,
   foliageBatcher: BotanicalFoliageBatcher,
@@ -1245,25 +1206,67 @@ function buildSiteContext(
   minZ: number,
   maxZ: number
 ): void {
-  const pad = 9.8;
+  const pad = 3.8;
   const px0 = minX - pad;
   const px1 = maxX + pad;
   const pz0 = minZ - pad;
   const pz1 = maxZ + pad;
 
-  // Raised architectural granite plaza deck & stepped perimeter curb
-  batcher.addBox('plazaPaver', px0, -0.18, pz0, px1, 0.0, pz1, 3.6);
-  batcher.addBox('concrete', px0 - 0.55, -0.26, pz0 - 0.55, px1 + 0.55, -0.10, pz1 + 0.55, 3.0);
+  // Compact raised limestone sidewalk plinth (0.15m tall like SIDEWALK in studio.ts!)
+  batcher.addBox('plazaPaver', px0, -0.15, pz0, px1, 0.0, pz1, 2.4);
+  // Crisp light granite perimeter curb framing the sidewalk
+  const curbW = 0.26;
+  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz0 - curbW, px1 + curbW, 0.008, pz0, 1.8);
+  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz1, px1 + curbW, 0.008, pz1 + curbW, 1.8);
+  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz0, px0, 0.008, pz1, 1.8);
+  batcher.addBox('facadeSecondary', px1, -0.16, pz0, px1 + curbW, 0.008, pz1, 1.8);
 
-  // Broad dark urban asphalt surround
-  batcher.addBox('asphalt', px0 - 95, -0.34, pz0 - 95, px1 + 95, -0.26, pz1 + 95, 6.5);
+  // Calm pale architectural model road plane
+  batcher.addBox('asphalt', px0 - 150, -0.24, pz0 - 150, px1 + 150, -0.155, pz1 + 150, 7.0);
 
-  // Clean perimeter concrete sidewalks
-  const roadGap = 3.5;
-  batcher.addBox('concrete', px0 - roadGap, -0.28, pz0 - roadGap, px1 + roadGap, -0.22, pz0 - 0.65, 4.0);
-  batcher.addBox('concrete', px0 - roadGap, -0.28, pz1 + 0.65, px1 + roadGap, -0.22, pz1 + roadGap, 4.0);
-  batcher.addBox('concrete', px0 - roadGap, -0.28, pz0 - 0.65, px0 - 0.65, -0.22, pz1 + 0.65, 4.0);
-  batcher.addBox('concrete', px1 + 0.65, -0.28, pz0 - 0.65, px1 + roadGap, -0.22, pz1 + 0.65, 4.0);
+  // Crisp subtle white architectural crosswalks & dashed center lane markings around the hero block
+  const roadW = 9.4;
+  const roadMidSouth = pz1 + curbW + roadW * 0.5;
+  const roadMidNorth = pz0 - curbW - roadW * 0.5;
+  const roadMidEast = px1 + curbW + roadW * 0.5;
+  const roadMidWest = px0 - curbW - roadW * 0.5;
+  const markY0 = -0.154;
+  const markY1 = -0.145;
+
+  // Dashed lane lines along South & North avenues
+  for (let x = px0 - 40; x <= px1 + 40; x += 5.4) {
+    if (Math.abs(x - roadMidEast) < 6.0 || Math.abs(x - roadMidWest) < 6.0) continue;
+    batcher.addBox('roadMark', x, markY0, roadMidSouth - 0.08, x + 2.4, markY1, roadMidSouth + 0.08, 2.0);
+    batcher.addBox('roadMark', x, markY0, roadMidNorth - 0.08, x + 2.4, markY1, roadMidNorth + 0.08, 2.0);
+  }
+  // Dashed lane lines along East & West cross-streets
+  for (let z = pz0 - 40; z <= pz1 + 40; z += 5.4) {
+    if (Math.abs(z - roadMidSouth) < 6.0 || Math.abs(z - roadMidNorth) < 6.0) continue;
+    batcher.addBox('roadMark', roadMidEast - 0.08, markY0, z, roadMidEast + 0.08, markY1, z + 2.4, 2.0);
+    batcher.addBox('roadMark', roadMidWest - 0.08, markY0, z, roadMidWest + 0.08, markY1, z + 2.4, 2.0);
+  }
+
+  // Zebra crosswalk bars tight at the 4 corners around the hero block (signature look of app.jpg & new-york.jpg!)
+  const addCrosswalkX = (cx: number, czCenter: number) => {
+    for (let k = -3; k <= 3; k++) {
+      const z = czCenter + k * 1.05;
+      batcher.addBox('roadMark', cx - 1.45, markY0, z - 0.25, cx + 1.45, markY1, z + 0.25, 2.0);
+    }
+  };
+  const addCrosswalkZ = (cxCenter: number, cz: number) => {
+    for (let k = -3; k <= 3; k++) {
+      const x = cxCenter + k * 1.05;
+      batcher.addBox('roadMark', x - 0.25, markY0, cz - 1.45, x + 0.25, markY1, cz + 1.45, 2.0);
+    }
+  };
+  addCrosswalkX(px0 + 0.6, roadMidSouth);
+  addCrosswalkX(px1 - 0.6, roadMidSouth);
+  addCrosswalkX(px0 + 0.6, roadMidNorth);
+  addCrosswalkX(px1 - 0.6, roadMidNorth);
+  addCrosswalkZ(roadMidWest, pz1 - 0.6);
+  addCrosswalkZ(roadMidWest, pz0 + 0.6);
+  addCrosswalkZ(roadMidEast, pz1 - 0.6);
+  addCrosswalkZ(roadMidEast, pz0 + 0.6);
 
   const isClearOfBuilding = (x: number, z: number, radius: number) =>
     !boxes.some(
@@ -1274,54 +1277,36 @@ function buildSiteContext(
         z <= b.max[2] + radius
     );
 
-  // High-detail botanical multi-branch trees in concrete planter beds
+  // Tasteful corner-only architectural street trees tucked near outer curb corners (like blue-hour.jpg!)
   const treeCandidates: [number, number][] = [
-    [px0 + 2.6, pz0 + 2.6],
-    [px1 - 2.6, pz0 + 2.6],
-    [px0 + 2.6, pz1 - 2.6],
-    [px1 - 2.6, pz1 - 2.6],
-    [(px0 + px1) * 0.5 - 6.2, pz1 - 2.5],
-    [(px0 + px1) * 0.5 + 6.2, pz1 - 2.5],
-    [px0 + 2.5, (pz0 + pz1) * 0.5],
-    [px1 - 2.5, (pz0 + pz1) * 0.5],
+    [px0 + 1.05, pz1 - 1.05],
+    [px1 - 1.05, pz1 - 1.05],
+    [px0 + 1.05, pz0 + 1.05],
+    [px1 - 1.05, pz0 + 1.05],
   ];
 
   treeCandidates.forEach(([tx, tz], idx) => {
-    if (!isClearOfBuilding(tx, tz, 3.6)) return;
-    const hScale = 0.92 + (idx % 3) * 0.14;
-    batcher.addBox('concrete', tx - 1.05, 0.0, tz - 1.05, tx + 1.05, 0.36, tz + 1.05, 2.2);
-    batcher.addBox('bark', tx - 0.86, 0.32, tz - 0.86, tx + 0.86, 0.38, tz + 0.86, 1.0);
-    foliageBatcher.addArchitecturalTree(tx, 0.34, tz, hScale, 1301 + idx * 97);
+    if (!isClearOfBuilding(tx, tz, 2.0)) return;
+    const hScale = 0.62 + (idx % 2) * 0.07;
+    batcher.addBox('concrete', tx - 0.62, 0.0, tz - 0.62, tx + 0.62, 0.22, tz + 0.62, 1.8);
+    batcher.addBox('bark', tx - 0.5, 0.18, tz - 0.5, tx + 0.5, 0.24, tz + 0.5, 1.0);
+    foliageBatcher.addArchitecturalTree(tx, 0.22, tz, hScale, 1301 + idx * 97);
   });
 
-  // Architectural concrete & cedar-slat plaza benches (adds real human architectural scale!)
-  const benchCandidates: [number, number][] = [
-    [(px0 + px1) * 0.5 - 3.6, pz1 - 2.8],
-    [(px0 + px1) * 0.5 + 3.6, pz1 - 2.8],
+  // Slim modern architectural street bollards along curb corners
+  const bollardPoints: [number, number][] = [
+    [px0 + 3.8, pz1 - 0.45],
+    [px1 - 3.8, pz1 - 0.45],
+    [px0 + 3.8, pz0 + 0.45],
+    [px1 - 3.8, pz0 + 0.45],
+    [px0 + 0.45, (pz0 + pz1) * 0.5],
+    [px1 - 0.45, (pz0 + pz1) * 0.5],
   ];
-  for (const [bx, bz] of benchCandidates) {
-    if (!isClearOfBuilding(bx, bz, 2.4)) continue;
-    batcher.addBox('concrete', bx - 0.95, 0.0, bz - 0.28, bx - 0.72, 0.42, bz + 0.28, 2.0);
-    batcher.addBox('concrete', bx + 0.72, 0.0, bz - 0.28, bx + 0.95, 0.42, bz + 0.28, 2.0);
-    batcher.addBox('soffitWood', bx - 1.02, 0.42, bz - 0.30, bx + 1.02, 0.49, bz + 0.30, 1.8);
-  }
-
-  // Sleek modern plaza bollard lights
-  const bollardPoints: [number, number][] = [];
-  const step = 6.5;
-  for (let x = px0 + 4.5; x <= px1 - 4.5; x += step) {
-    bollardPoints.push([x, pz1 - 0.85]);
-    bollardPoints.push([x, pz0 + 0.85]);
-  }
-  for (let z = pz0 + 5.0; z <= pz1 - 5.0; z += step) {
-    bollardPoints.push([px0 + 0.85, z]);
-    bollardPoints.push([px1 - 0.85, z]);
-  }
 
   for (const [bx, bz] of bollardPoints) {
-    if (!isClearOfBuilding(bx, bz, 1.6)) continue;
-    batcher.addCylinder('mullion', bx, 0.0, 0.76, bz, 0.065, 0.065, 12);
-    batcher.addCylinder('emissiveWarm', bx, 0.76, 0.90, bz, 0.058, 0.058, 12);
-    batcher.addCylinder('mullion', bx, 0.90, 0.96, bz, 0.072, 0.068, 12);
+    if (!isClearOfBuilding(bx, bz, 1.4)) continue;
+    batcher.addCylinder('mullion', bx, 0.0, 0.74, bz, 0.055, 0.055, 12);
+    batcher.addCylinder('emissiveWarm', bx, 0.74, 0.86, bz, 0.05, 0.05, 12);
+    batcher.addCylinder('mullion', bx, 0.86, 0.91, bz, 0.06, 0.055, 12);
   }
 }

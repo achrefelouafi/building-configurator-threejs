@@ -31,12 +31,19 @@ import { MassingPresetKey, TopBar } from './components/TopBar';
 import { MassingToolbar } from './components/MassingToolbar';
 import { BuildingControls } from './components/BuildingControls';
 import { LoadingOverlay } from './components/LoadingOverlay';
+import { ContactCard } from './components/ContactCard';
+
+const STYLE_ACCENTS: Record<ArchitecturalStyle, string> = {
+  contemporary: '#e2c08d',
+  'brick-loft': '#ff7a45',
+  'travertine-bronze': '#d4a53c',
+};
 
 const INITIAL_LOAD_SNAPSHOT: BuildingLoadSnapshot = {
   gpuReady: false,
   gpuBackend: null,
   texturesLoaded: 0,
-  texturesTotal: 43,
+  texturesTotal: 39,
   hdrisLoaded: 0,
   hdrisTotal: 3,
   currentAsset: 'Initializing WebGPU backend…',
@@ -77,9 +84,9 @@ export const App: React.FC = () => {
   const [splitAxis, setSplitAxis] = useState<SplitAxis>('auto');
   const [floorSnap, setFloorSnap] = useState<boolean>(true);
 
-  // ArchViz PBR states
+  // ArchViz PBR states (defaults to crisp Architectural Daylight matching ProdceduralBuildingsThreeJS)
   const [style, setStyle] = useState<ArchitecturalStyle>('contemporary');
-  const [lighting, setLighting] = useState<LightingPreset>('golden-hour');
+  const [lighting, setLighting] = useState<LightingPreset>('daylight');
   const [showColumns, setShowColumns] = useState<boolean>(true);
   const [showSite, setShowSite] = useState<boolean>(true);
   const [postFX, setPostFX] = useState<boolean>(true);
@@ -263,21 +270,50 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const handleSelectPreset = useCallback((preset: MassingPresetKey) => {
-    const next = createPresetMassing(preset);
-    setHistory((h) => ({
-      past: [...h.past.slice(-49), h.present],
-      present: next,
-      future: [],
-    }));
-    setActivePreset(preset);
-    setSelectedFaceId(findTopFaceId(next));
-    setToolMode('extrude');
+  const frameStateCamera = useCallback((state: MassingState) => {
+    let minX = Infinity,
+      maxX = -Infinity,
+      maxY = 7.8,
+      minZ = Infinity,
+      maxZ = -Infinity;
+    for (const b of state.boxes) {
+      minX = Math.min(minX, b.min[0]);
+      maxX = Math.max(maxX, b.max[0]);
+      maxY = Math.max(maxY, b.max[1]);
+      minZ = Math.min(minZ, b.min[2]);
+      maxZ = Math.max(maxZ, b.max[2]);
+    }
+    const cx = Number.isFinite(minX) ? (minX + maxX) * 0.5 : 0;
+    const cz = Number.isFinite(minZ) ? (minZ + maxZ) * 0.5 : 0;
+    const span = Number.isFinite(minX) ? Math.max(maxX - minX, maxZ - minZ, 12) : 12;
+    const radius = Math.hypot(span * 0.55, maxY * 0.65);
+    const dist = Math.max(41, radius * 2.95);
+    const targetY = Math.max(4.5, maxY * 0.44);
+    syncRef.current?.resetBoth(
+      new THREE.Vector3(cx, targetY, cz),
+      new THREE.Vector3(cx + dist * 0.66, targetY + dist * 0.38, cz + dist * 0.74)
+    );
   }, []);
 
+  const handleSelectPreset = useCallback(
+    (preset: MassingPresetKey) => {
+      const next = createPresetMassing(preset);
+      setHistory((h) => ({
+        past: [...h.past.slice(-49), h.present],
+        present: next,
+        future: [],
+      }));
+      setActivePreset(preset);
+      setSelectedFaceId(findTopFaceId(next));
+      setToolMode('extrude');
+      frameStateCamera(next);
+    },
+    [frameStateCamera]
+  );
+
   const handleResetCamera = useCallback(() => {
-    syncRef.current?.resetBoth(new THREE.Vector3(0, 5, 0), new THREE.Vector3(24, 19, 27));
-  }, []);
+    frameStateCamera(stateRef.current);
+  }, [frameStateCamera]);
 
   const handleQuickExtrude = useCallback(
     (distance: number, insetMargin = 0) => {
@@ -296,6 +332,78 @@ export const App: React.FC = () => {
     if (!selectedFace) return;
     handleCommitInset(selectedFace, 1.6);
   }, [selectedFace, handleCommitInset]);
+
+  // Expose live choreography API for automated 1080p viral video capture
+  const selectedFaceIdRef = useRef<string | null>(selectedFaceId);
+  selectedFaceIdRef.current = selectedFaceId;
+  useEffect(() => {
+    const win = window as unknown as Record<string, unknown>;
+    win.__vcStudio = {
+      isReady: () => Boolean(massingReady && buildingVpRef.current?.isFullyWarmedUp()),
+      setCamera: (pos: [number, number, number], target: [number, number, number]) => {
+        syncRef.current?.resetBoth(new THREE.Vector3(...target), new THREE.Vector3(...pos));
+      },
+      getCamera: () => {
+        const vp = buildingVpRef.current;
+        if (!vp) return { pos: [28, 19, 32], target: [0, 4.5, 0] };
+        const p = vp.camera.position, t = vp.controls.target;
+        return { pos: [p.x, p.y, p.z], target: [t.x, t.y, t.z] };
+      },
+      selectPreset: (id: MassingPresetKey) => handleSelectPreset(id),
+      selectStyle: (id: ArchitecturalStyle) => setStyle(id),
+      selectLighting: (id: LightingPreset) => setLighting(id),
+      selectFaceByDir: (dir: string) => {
+        const faces = computeExposedFaces(stateRef.current).filter((f) => !f.locked && f.dir === dir);
+        if (faces.length === 0) return false;
+        faces.sort((a, b) => b.width * b.height - a.width * a.height);
+        setSelectedFaceId(faces[0].id);
+        return true;
+      },
+      previewExtrude: (delta: number, isSetback = false) => {
+        const faces = computeExposedFaces(stateRef.current);
+        const f = faces.find((x) => x.id === selectedFaceIdRef.current && !x.locked);
+        if (!f) return;
+        massingVpRef.current?.showProgrammaticDragPreview(f, delta, isSetback);
+        const inset = isSetback && delta > 0 ? 1.6 : 0;
+        if (Math.abs(delta) >= 0.4) {
+          const res = applyExtrude(stateRef.current, f, delta, inset);
+          setPreviewState(res.state);
+        } else {
+          setPreviewState(null);
+        }
+      },
+      commitExtrude: (delta: number, isSetback = false) => {
+        const faces = computeExposedFaces(stateRef.current);
+        const f = faces.find((x) => x.id === selectedFaceIdRef.current && !x.locked);
+        massingVpRef.current?.showProgrammaticDragPreview(null, 0, false);
+        setPreviewState(null);
+        if (!f) return;
+        handleCommitExtrude(f, delta, isSetback && delta > 0 ? 1.6 : 0);
+      },
+      splitSelected: (axis: SplitAxis = 'auto', ratio = 0.5) => {
+        const faces = computeExposedFaces(stateRef.current);
+        const f = faces.find((x) => x.id === selectedFaceIdRef.current && !x.locked);
+        if (f) handleCommitSplit(f, axis, ratio);
+      },
+      insetSelected: () => {
+        const faces = computeExposedFaces(stateRef.current);
+        const f = faces.find((x) => x.id === selectedFaceIdRef.current && !x.locked);
+        if (f) handleCommitInset(f, 1.6);
+      },
+      resetCamera: () => handleResetCamera(),
+      getPresets: () => ['box', 'stepped-tower', 'cantilever-pavilion', 'courtyard-complex'],
+      getBounds: () => {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (const b of stateRef.current.boxes) {
+          minX = Math.min(minX, b.min[0]); maxX = Math.max(maxX, b.max[0]);
+          minY = Math.min(minY, b.min[1]); maxY = Math.max(maxY, b.max[1]);
+          minZ = Math.min(minZ, b.min[2]); maxZ = Math.max(maxZ, b.max[2]);
+        }
+        return { minX, maxX, minY, maxY, minZ, maxZ };
+      },
+    };
+    return () => { delete win.__vcStudio; };
+  }, [massingReady, handleSelectPreset, handleCommitExtrude, handleCommitSplit, handleCommitInset, handleResetCamera]);
 
   // Global keyboard shortcuts (E, S, K, I, Ctrl+Z, Ctrl+Y)
   useEffect(() => {
@@ -420,6 +528,11 @@ export const App: React.FC = () => {
               onToggleColumns={() => setShowColumns((v) => !v)}
               onToggleSite={() => setShowSite((v) => !v)}
               onTogglePostFX={() => setPostFX((v) => !v)}
+            />
+
+            <ContactCard
+              accent={STYLE_ACCENTS[style]}
+              ready={massingReady && loadSnapshot.warmedUp}
             />
           </>
         }

@@ -16,9 +16,9 @@ interface BuildingControlsProps {
 }
 
 const STYLES: { id: ArchitecturalStyle; label: string }[] = [
-  { id: 'contemporary', label: 'Limestone & Glass' },
+  { id: 'contemporary', label: 'Limestone' },
   { id: 'brick-loft', label: 'Brick Loft' },
-  { id: 'travertine-bronze', label: 'Travertine & Bronze' },
+  { id: 'travertine-bronze', label: 'Travertine' },
 ];
 
 export const BuildingControls: React.FC<BuildingControlsProps> = ({
@@ -79,10 +79,10 @@ export const BuildingControls: React.FC<BuildingControlsProps> = ({
       <button
         className={`dock-btn ${postFX ? 'active' : ''}`}
         onClick={onTogglePostFX}
-        title="Toggle WebGPU Ground-Truth Ambient Occlusion (GTAO) + HDR Bloom"
+        title="Toggle WebGPU Ground-Truth Ambient Occlusion (GTAO) + Film Grade"
       >
-        <Sparkles size={14} />
-        <span>GTAO + Bloom</span>
+        <Sparkles size={13} />
+        <span>GTAO</span>
       </button>
 
       <button
@@ -90,17 +90,17 @@ export const BuildingControls: React.FC<BuildingControlsProps> = ({
         onClick={onToggleColumns}
         title="Toggle structural pilotis columns beneath deep cantilevers"
       >
-        <Columns3 size={14} />
+        <Columns3 size={13} />
         <span>Pilotis</span>
       </button>
 
       <button
         className={`dock-btn ${showSite ? 'active' : ''}`}
         onClick={onToggleSite}
-        title="Toggle surrounding granite plaza, trees, and bollards"
+        title="Toggle surrounding city context, sidewalk, and trees"
       >
-        <Trees size={14} />
-        <span>Plaza</span>
+        <Trees size={13} />
+        <span>City</span>
       </button>
     </div>
   );

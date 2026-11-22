@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { abs, clamp, dot, float, max, normalView, positionViewDirection, sqrt, uniform } from 'three/tsl';
 import { ArchitecturalStyle, LightingPreset } from '../core/types';
 import { createBotanicalLeafSprigTextures, FoliageTextureMaps } from './foliageGenerator';
 
@@ -22,9 +23,9 @@ export interface BuildingMaterialPalette {
   plinth: THREE.MeshStandardMaterial;
   mullion: THREE.MeshStandardMaterial;
   accentMetal: THREE.MeshStandardMaterial;
-  glass: THREE.MeshPhysicalMaterial;
+  glass: THREE.MeshStandardNodeMaterial;
   spandrelGlass: THREE.MeshPhysicalMaterial;
-  balustradeGlass: THREE.MeshPhysicalMaterial;
+  balustradeGlass: THREE.MeshStandardNodeMaterial;
   interiorWall: THREE.MeshStandardMaterial;
   interiorCeiling: THREE.MeshStandardMaterial;
   interiorFloor: THREE.MeshStandardMaterial;
@@ -39,17 +40,13 @@ export interface BuildingMaterialPalette {
   bark: THREE.MeshStandardMaterial;
   plazaPaver: THREE.MeshStandardMaterial;
   asphalt: THREE.MeshStandardMaterial;
+  roadMark: THREE.MeshStandardMaterial;
 }
 
 /**
- * Loads and manages 12 real CC0 photographic PBR texture sets from AmbientCG:
- * - Concrete048 (Brushed pale limestone/architectural precast), Bricks051 (Kiln-fired brick)
- * - Travertine009 (Roman travertine), Concrete016 (Cast architectural concrete & honed interior floors)
- * - Concrete017 (Dark honed basalt/concrete plinth), Plaster001 (Matte architectural interior plaster)
- * - WoodFloor040 (Warm cedar soffits), Metal049A (Brushed anodized metal w/ metalness map)
- * - PavingStones128 (Stone plaza & terrace pavers), Concrete034 (Roof deck)
- * - Asphalt031 (Urban street), Bark014 (Scanned botanical tree bark)
- * Paired with untextured physical exterior-reflective plate glass & botanical leaf sprigs.
+ * Calibrated PBR Material Library built on 12 real AmbientCG CC0 scanned sets
+ * tuned to match the tactile stonework, deep shadowed windows, calm pale streets,
+ * and exact FR_Glass dielectric Fresnel mirror glazing of ProdceduralBuildingsThreeJS.
  */
 export class PBRMaterialLibrary {
   private loader = new THREE.TextureLoader();
@@ -60,7 +57,6 @@ export class PBRMaterialLibrary {
   private onProgress?: (progress: TextureLoadProgress) => void;
   private activeEnvMap: THREE.Texture | null = null;
 
-  private limestoneTex: LoadedACGSet;
   private brickTex: LoadedACGSet;
   private travertineTex: LoadedACGSet;
   private concreteTex: LoadedACGSet;
@@ -75,10 +71,46 @@ export class PBRMaterialLibrary {
 
   private leafSprigTex: FoliageTextureMaps;
   private palettes = new Map<ArchitecturalStyle, BuildingMaterialPalette>();
+  private glassBaseOpacityUniform = uniform(0.04);
+
+  /**
+   * Exact WebGPU TSL port of FR_Glass from ProdceduralBuildingsThreeJS/src/materials.ts:
+   * Mix Shader(Transparent, Glossy) by dielectric Layer-Weight Fresnel (blend 0.18) + baseFloor.
+   * Premultiplied alpha keeps straight-on views crisp into dark hollow 3D interiors while
+   * angled views catch clean, non-blown-out sky & HDRI reflections.
+   */
+  private createFresnelGlass(
+    tintHex: string,
+    fresnelBlend: number,
+    baseFloorOpacity: number,
+    envIntensity: number,
+    doubleSided = false
+  ): THREE.MeshStandardNodeMaterial {
+    const mat = new THREE.MeshStandardNodeMaterial({
+      color: new THREE.Color(tintHex),
+      metalness: 1.0,
+      roughness: 0.03,
+      transparent: true,
+      premultipliedAlpha: true,
+      depthWrite: false,
+      envMapIntensity: envIntensity,
+      side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+    });
+
+    const eta = float(1.0 / (1.0 - fresnelBlend));
+    const c = abs(dot(positionViewDirection, normalView));
+    const g = sqrt(max(eta.mul(eta).sub(1.0).add(c.mul(c)), float(0.0)));
+    const A = g.sub(c).div(max(g.add(c), float(1e-4)));
+    const B = c.mul(g.add(c)).sub(1.0).div(max(c.mul(g.sub(c)).add(1.0), float(1e-4)));
+    const F = float(0.5).mul(A).mul(A).mul(float(1.0).add(B.mul(B)));
+
+    const floorNode = doubleSided ? float(baseFloorOpacity) : this.glassBaseOpacityUniform;
+    mat.opacityNode = clamp(F.add(floorNode), 0.0, 1.0);
+    return mat;
+  }
 
   constructor(anisotropy = 8, onProgress?: (progress: TextureLoadProgress) => void) {
     this.onProgress = onProgress;
-    this.limestoneTex = this.loadACGSet('limestone', { aniso: anisotropy, hasAO: true });
     this.brickTex = this.loadACGSet('brick', { aniso: anisotropy });
     this.travertineTex = this.loadACGSet('travertine', { aniso: anisotropy, hasAO: true });
     this.concreteTex = this.loadACGSet('concrete', { aniso: anisotropy });
@@ -133,10 +165,6 @@ export class PBRMaterialLibrary {
     return set;
   }
 
-  /**
-   * Explicitly binds the active HDRI texture to reflective materials so Three.js WebGPU
-   * honors per-material envMapIntensity for true mirror-like architectural glass reflections.
-   */
   public setEnvironmentMap(envMap: THREE.Texture | null): void {
     this.activeEnvMap = envMap;
     for (const p of this.palettes.values()) {
@@ -145,7 +173,11 @@ export class PBRMaterialLibrary {
   }
 
   private applyEnvMapToPalette(p: BuildingMaterialPalette, envMap: THREE.Texture | null): void {
-    const targets: (THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial)[] = [
+    const targets: (
+      | THREE.MeshStandardMaterial
+      | THREE.MeshPhysicalMaterial
+      | THREE.MeshStandardNodeMaterial
+    )[] = [
       p.glass,
       p.spandrelGlass,
       p.balustradeGlass,
@@ -169,121 +201,97 @@ export class PBRMaterialLibrary {
     if (style === 'contemporary') {
       p = {
         ...common,
+        // Authentic cut ashlar Parisian limestone masonry (PavingStones128 blocks + crisp mortar AO!)
         facadePrimary: new THREE.MeshStandardMaterial({
-          map: this.limestoneTex.map,
-          normalMap: this.limestoneTex.normalMap,
-          normalScale: new THREE.Vector2(0.75, 0.75),
-          roughnessMap: this.limestoneTex.roughnessMap,
-          aoMap: this.limestoneTex.aoMap,
-          aoMapIntensity: 0.72,
-          roughness: 0.92,
-          metalness: 0.02,
-          color: new THREE.Color('#f4f1ea'),
-        }),
-        facadeSecondary: new THREE.MeshStandardMaterial({
-          map: this.concreteTex.map,
-          normalMap: this.concreteTex.normalMap,
-          normalScale: new THREE.Vector2(0.65, 0.65),
-          roughnessMap: this.concreteTex.roughnessMap,
+          map: this.paverTex.map,
+          normalMap: this.paverTex.normalMap,
+          normalScale: new THREE.Vector2(1.55, 1.55),
+          roughnessMap: this.paverTex.roughnessMap,
+          aoMap: this.paverTex.aoMap,
+          aoMapIntensity: 1.0,
           roughness: 0.9,
-          metalness: 0.04,
-          color: new THREE.Color('#dcdfe4'),
+          metalness: 0.02,
+          color: new THREE.Color('#b5aea2'),
+        }),
+        // Crisp creamy-white dressed architectural stone trim / cornices / quoins / sills
+        facadeSecondary: new THREE.MeshStandardMaterial({
+          map: this.plasterTex.map,
+          normalMap: this.plasterTex.normalMap,
+          normalScale: new THREE.Vector2(0.9, 0.9),
+          roughnessMap: this.plasterTex.roughnessMap,
+          roughness: 0.86,
+          metalness: 0.02,
+          color: new THREE.Color('#eee8dc'),
         }),
         mullion: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
-          normalScale: new THREE.Vector2(0.35, 0.35),
+          normalScale: new THREE.Vector2(0.75, 0.75),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.36,
-          metalness: 0.92,
-          envMapIntensity: 1.5,
-          color: new THREE.Color('#232830'),
+          roughness: 0.42,
+          metalness: 0.78,
+          envMapIntensity: 0.85,
+          color: new THREE.Color('#272b32'),
         }),
         accentMetal: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
-          normalScale: new THREE.Vector2(0.35, 0.35),
+          normalScale: new THREE.Vector2(0.7, 0.7),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.32,
-          metalness: 0.94,
-          envMapIntensity: 1.65,
-          color: new THREE.Color('#cbbba2'),
+          roughness: 0.36,
+          metalness: 0.84,
+          envMapIntensity: 0.95,
+          color: new THREE.Color('#9c8c74'),
         }),
-        // Untextured real physical exterior-reflective plate glass (low opacity + high mirror HDR reflection)
-        glass: new THREE.MeshPhysicalMaterial({
-          color: new THREE.Color('#0c1824'),
-          metalness: 0.52,
-          roughness: 0.015,
-          ior: 1.52,
-          reflectivity: 1.0,
-          specularIntensity: 1.0,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.008,
-          transparent: true,
-          opacity: 0.38,
-          envMapIntensity: 3.6,
-          depthWrite: false,
-        }),
+        glass: this.createFresnelGlass('#c9d4de', 0.18, 0.04, 0.85),
       };
     } else if (style === 'brick-loft') {
       p = {
         ...common,
+        // Authentic deep NYC kiln-fired terracotta masonry (like ProdceduralBuildingsThreeJS new-york.jpg)
         facadePrimary: new THREE.MeshStandardMaterial({
           map: this.brickTex.map,
           normalMap: this.brickTex.normalMap,
-          normalScale: new THREE.Vector2(1.2, 1.2),
+          normalScale: new THREE.Vector2(1.75, 1.75),
           roughnessMap: this.brickTex.roughnessMap,
           roughness: 1.0,
           metalness: 0.02,
-          color: new THREE.Color('#ded5cc'),
+          color: new THREE.Color('#b89886'),
         }),
         facadeSecondary: new THREE.MeshStandardMaterial({
-          map: this.limestoneTex.map,
-          normalMap: this.limestoneTex.normalMap,
-          normalScale: new THREE.Vector2(0.8, 0.8),
-          roughnessMap: this.limestoneTex.roughnessMap,
-          aoMap: this.limestoneTex.aoMap,
-          aoMapIntensity: 0.7,
-          roughness: 0.92,
-          metalness: 0.03,
-          color: new THREE.Color('#d6cfc4'),
+          map: this.plasterTex.map,
+          normalMap: this.plasterTex.normalMap,
+          normalScale: new THREE.Vector2(0.95, 0.95),
+          roughnessMap: this.plasterTex.roughnessMap,
+          roughness: 0.88,
+          metalness: 0.02,
+          color: new THREE.Color('#e8e0d2'),
         }),
         mullion: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
+          normalScale: new THREE.Vector2(0.7, 0.7),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.42,
-          metalness: 0.88,
-          envMapIntensity: 1.35,
+          roughness: 0.46,
+          metalness: 0.74,
+          envMapIntensity: 0.75,
           color: new THREE.Color('#1f2228'),
         }),
         accentMetal: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
+          normalScale: new THREE.Vector2(0.7, 0.7),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.44,
-          metalness: 0.88,
-          envMapIntensity: 1.35,
-          color: new THREE.Color('#4a3c32'),
+          roughness: 0.48,
+          metalness: 0.76,
+          envMapIntensity: 0.75,
+          color: new THREE.Color('#473a31'),
         }),
-        glass: new THREE.MeshPhysicalMaterial({
-          color: new THREE.Color('#101920'),
-          metalness: 0.46,
-          roughness: 0.018,
-          ior: 1.52,
-          reflectivity: 1.0,
-          specularIntensity: 1.0,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.01,
-          transparent: true,
-          opacity: 0.34,
-          envMapIntensity: 3.3,
-          depthWrite: false,
-        }),
+        glass: this.createFresnelGlass('#c4cdd6', 0.18, 0.04, 0.85),
       };
     } else {
       // travertine-bronze
@@ -292,58 +300,46 @@ export class PBRMaterialLibrary {
         facadePrimary: new THREE.MeshStandardMaterial({
           map: this.travertineTex.map,
           normalMap: this.travertineTex.normalMap,
-          normalScale: new THREE.Vector2(1.0, 1.0),
+          normalScale: new THREE.Vector2(1.45, 1.45),
           roughnessMap: this.travertineTex.roughnessMap,
           aoMap: this.travertineTex.aoMap,
-          aoMapIntensity: 0.78,
-          roughness: 0.96,
+          aoMapIntensity: 1.0,
+          roughness: 0.92,
           metalness: 0.02,
-          color: new THREE.Color('#f0e8db'),
+          color: new THREE.Color('#d9ccb6'),
         }),
         facadeSecondary: new THREE.MeshStandardMaterial({
-          map: this.travertineTex.map,
-          normalMap: this.travertineTex.normalMap,
-          roughnessMap: this.travertineTex.roughnessMap,
-          aoMap: this.travertineTex.aoMap,
-          aoMapIntensity: 0.72,
-          roughness: 0.94,
-          metalness: 0.03,
-          color: new THREE.Color('#d4c5ae'),
+          map: this.plasterTex.map,
+          normalMap: this.plasterTex.normalMap,
+          normalScale: new THREE.Vector2(0.9, 0.9),
+          roughnessMap: this.plasterTex.roughnessMap,
+          roughness: 0.86,
+          metalness: 0.02,
+          color: new THREE.Color('#efe7d8'),
         }),
         mullion: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
+          normalScale: new THREE.Vector2(0.75, 0.75),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.34,
-          metalness: 0.94,
-          envMapIntensity: 1.65,
-          color: new THREE.Color('#5a412a'),
+          roughness: 0.38,
+          metalness: 0.85,
+          envMapIntensity: 0.95,
+          color: new THREE.Color('#4a3523'),
         }),
         accentMetal: new THREE.MeshStandardMaterial({
           map: this.metalTex.map,
           normalMap: this.metalTex.normalMap,
+          normalScale: new THREE.Vector2(0.7, 0.7),
           roughnessMap: this.metalTex.roughnessMap,
           metalnessMap: this.metalTex.metalnessMap,
-          roughness: 0.28,
-          metalness: 0.95,
-          envMapIntensity: 1.85,
-          color: new THREE.Color('#bd9159'),
+          roughness: 0.34,
+          metalness: 0.88,
+          envMapIntensity: 1.05,
+          color: new THREE.Color('#a68050'),
         }),
-        glass: new THREE.MeshPhysicalMaterial({
-          color: new THREE.Color('#1a1612'),
-          metalness: 0.54,
-          roughness: 0.015,
-          ior: 1.52,
-          reflectivity: 1.0,
-          specularIntensity: 1.0,
-          clearcoat: 1.0,
-          clearcoatRoughness: 0.008,
-          transparent: true,
-          opacity: 0.38,
-          envMapIntensity: 3.6,
-          depthWrite: false,
-        }),
+        glass: this.createFresnelGlass('#d4cec4', 0.18, 0.04, 0.85),
       };
     }
 
@@ -357,131 +353,120 @@ export class PBRMaterialLibrary {
 
   private createCommonMaterials() {
     return {
+      // Honed dark architectural basalt plinth
       plinth: new THREE.MeshStandardMaterial({
         map: this.graniteTex.map,
         normalMap: this.graniteTex.normalMap,
-        normalScale: new THREE.Vector2(0.75, 0.75),
+        normalScale: new THREE.Vector2(1.15, 1.15),
         roughnessMap: this.graniteTex.roughnessMap,
-        roughness: 0.78,
+        roughness: 0.84,
         metalness: 0.06,
-        color: new THREE.Color('#595e66'),
+        color: new THREE.Color('#5a5d62'),
       }),
       spandrelGlass: new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#091018'),
-        metalness: 0.84,
-        roughness: 0.03,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.015,
-        reflectivity: 1.0,
-        envMapIntensity: 2.8,
+        color: new THREE.Color('#131a22'),
+        metalness: 0.65,
+        roughness: 0.08,
+        clearcoat: 0.85,
+        clearcoatRoughness: 0.04,
+        envMapIntensity: 0.85,
       }),
-      balustradeGlass: new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#132430'),
-        metalness: 0.32,
-        roughness: 0.02,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.01,
-        transparent: true,
-        opacity: 0.26,
-        envMapIntensity: 2.5,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
-      // Real hollow 3D interior shell materials (clean architectural plaster & honed floor)
+      balustradeGlass: this.createFresnelGlass('#bfd0dc', 0.14, 0.04, 0.8, true),
+      // Realistically shadowed hollow 3D interior shell (~2 stops darker than exterior sunlit stone!)
       interiorWall: new THREE.MeshStandardMaterial({
         map: this.plasterTex.map,
         normalMap: this.plasterTex.normalMap,
-        normalScale: new THREE.Vector2(0.35, 0.35),
+        normalScale: new THREE.Vector2(0.55, 0.55),
         roughnessMap: this.plasterTex.roughnessMap,
-        roughness: 0.94,
+        roughness: 0.95,
         metalness: 0.0,
-        color: new THREE.Color('#ebe6dd'),
+        color: new THREE.Color('#69645d'),
       }),
       interiorCeiling: new THREE.MeshStandardMaterial({
         map: this.plasterTex.map,
         normalMap: this.plasterTex.normalMap,
-        normalScale: new THREE.Vector2(0.25, 0.25),
+        normalScale: new THREE.Vector2(0.4, 0.4),
         roughnessMap: this.plasterTex.roughnessMap,
         roughness: 0.96,
         metalness: 0.0,
-        color: new THREE.Color('#f4f1ea'),
+        color: new THREE.Color('#78736c'),
       }),
       interiorFloor: new THREE.MeshStandardMaterial({
         map: this.concreteTex.map,
         normalMap: this.concreteTex.normalMap,
-        normalScale: new THREE.Vector2(0.4, 0.4),
+        normalScale: new THREE.Vector2(0.65, 0.65),
         roughnessMap: this.concreteTex.roughnessMap,
-        roughness: 0.36,
-        metalness: 0.06,
-        envMapIntensity: 0.95,
-        color: new THREE.Color('#cfc7bb'),
+        roughness: 0.5,
+        metalness: 0.04,
+        envMapIntensity: 0.45,
+        color: new THREE.Color('#4d4943'),
       }),
       roofDeck: new THREE.MeshStandardMaterial({
         map: this.roofTex.map,
         normalMap: this.roofTex.normalMap,
-        normalScale: new THREE.Vector2(0.95, 0.95),
+        normalScale: new THREE.Vector2(1.3, 1.3),
         roughnessMap: this.roofTex.roughnessMap,
-        roughness: 1.0,
-        metalness: 0.03,
-        color: new THREE.Color('#b6b9be'),
+        roughness: 0.96,
+        metalness: 0.02,
+        color: new THREE.Color('#6a6c70'),
       }),
       terracePaver: new THREE.MeshStandardMaterial({
         map: this.paverTex.map,
         normalMap: this.paverTex.normalMap,
-        normalScale: new THREE.Vector2(0.9, 0.9),
+        normalScale: new THREE.Vector2(1.1, 1.1),
         roughnessMap: this.paverTex.roughnessMap,
         aoMap: this.paverTex.aoMap,
-        aoMapIntensity: 0.78,
-        roughness: 1.0,
+        aoMapIntensity: 0.9,
+        roughness: 0.92,
         metalness: 0.02,
-        color: new THREE.Color('#e6e0d5'),
+        color: new THREE.Color('#cbc6bc'),
       }),
       soffitWood: new THREE.MeshStandardMaterial({
         map: this.timberTex.map,
         normalMap: this.timberTex.normalMap,
-        normalScale: new THREE.Vector2(1.05, 1.05),
+        normalScale: new THREE.Vector2(1.35, 1.35),
         roughnessMap: this.timberTex.roughnessMap,
         aoMap: this.timberTex.aoMap,
-        aoMapIntensity: 0.85,
-        roughness: 0.82,
-        metalness: 0.03,
-        color: new THREE.Color('#cfa882'),
+        aoMapIntensity: 0.95,
+        roughness: 0.78,
+        metalness: 0.02,
+        color: new THREE.Color('#b68c64'),
       }),
       concrete: new THREE.MeshStandardMaterial({
         map: this.concreteTex.map,
         normalMap: this.concreteTex.normalMap,
-        normalScale: new THREE.Vector2(0.75, 0.75),
+        normalScale: new THREE.Vector2(1.1, 1.1),
         roughnessMap: this.concreteTex.roughnessMap,
-        roughness: 0.92,
-        metalness: 0.04,
-        color: new THREE.Color('#cccfd4'),
+        roughness: 0.9,
+        metalness: 0.03,
+        color: new THREE.Color('#b8bbb8'),
       }),
       solarPanel: new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#0c172b'),
-        metalness: 0.52,
-        roughness: 0.1,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.05,
-        envMapIntensity: 2.2,
+        color: new THREE.Color('#121c2d'),
+        metalness: 0.55,
+        roughness: 0.14,
+        clearcoat: 0.85,
+        clearcoatRoughness: 0.06,
+        envMapIntensity: 0.9,
       }),
       emissiveWarm: new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#fff6e5'),
-        emissive: new THREE.Color('#ffc97d'),
-        emissiveIntensity: 2.2,
-        roughness: 0.2,
+        color: new THREE.Color('#ffeed1'),
+        emissive: new THREE.Color('#ffb866'),
+        emissiveIntensity: 1.0,
+        roughness: 0.3,
       }),
       emissiveCool: new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#eef7ff'),
-        emissive: new THREE.Color('#b8dcff'),
-        emissiveIntensity: 1.0,
-        roughness: 0.25,
+        color: new THREE.Color('#e6f2ff'),
+        emissive: new THREE.Color('#a4cbff'),
+        emissiveIntensity: 0.7,
+        roughness: 0.3,
       }),
       foliage: new THREE.MeshStandardMaterial({
         map: this.leafSprigTex.map,
         normalMap: this.leafSprigTex.normalMap,
-        normalScale: new THREE.Vector2(0.65, 0.65),
+        normalScale: new THREE.Vector2(0.75, 0.75),
         roughnessMap: this.leafSprigTex.roughnessMap,
-        roughness: 0.76,
+        roughness: 0.84,
         metalness: 0.0,
         alphaTest: 0.42,
         side: THREE.DoubleSide,
@@ -490,76 +475,92 @@ export class PBRMaterialLibrary {
       bark: new THREE.MeshStandardMaterial({
         map: this.barkTex.map,
         normalMap: this.barkTex.normalMap,
-        normalScale: new THREE.Vector2(1.25, 1.25),
+        normalScale: new THREE.Vector2(1.4, 1.4),
         roughnessMap: this.barkTex.roughnessMap,
         aoMap: this.barkTex.aoMap,
-        aoMapIntensity: 0.85,
-        roughness: 1.0,
+        aoMapIntensity: 0.9,
+        roughness: 0.96,
         metalness: 0.0,
-        color: new THREE.Color('#c2b29f'),
+        color: new THREE.Color('#9e8e7c'),
       }),
+      // Calm, bright architectural limestone sidewalk (matching ProdceduralBuildingsThreeJS app.jpg!)
       plazaPaver: new THREE.MeshStandardMaterial({
-        map: this.paverTex.map,
-        normalMap: this.paverTex.normalMap,
-        normalScale: new THREE.Vector2(0.85, 0.85),
-        roughnessMap: this.paverTex.roughnessMap,
-        aoMap: this.paverTex.aoMap,
-        aoMapIntensity: 0.78,
-        roughness: 1.0,
+        map: this.roofTex.map,
+        normalMap: this.roofTex.normalMap,
+        normalScale: new THREE.Vector2(0.95, 0.95),
+        roughnessMap: this.roofTex.roughnessMap,
+        roughness: 0.9,
         metalness: 0.02,
-        color: new THREE.Color('#d8d2c8'),
+        color: new THREE.Color('#dddad2'),
       }),
+      // Calm pale model street matching ProdceduralBuildingsThreeJS rgb(0.43, 0.43, 0.425) + tactile asphalt micro-grain
       asphalt: new THREE.MeshStandardMaterial({
-        map: this.asphaltTex.map,
+        map: this.roofTex.map,
         normalMap: this.asphaltTex.normalMap,
-        normalScale: new THREE.Vector2(0.85, 0.85),
+        normalScale: new THREE.Vector2(0.65, 0.65),
         roughnessMap: this.asphaltTex.roughnessMap,
-        aoMap: this.asphaltTex.aoMap,
-        aoMapIntensity: 0.75,
-        roughness: 1.0,
-        metalness: 0.02,
-        color: new THREE.Color('#8e949e'),
+        roughness: 0.92,
+        metalness: 0.01,
+        color: new THREE.Color('#c8cbd0'),
+      }),
+      // Crisp bright-white architectural crosswalk & dashed lane paint
+      roadMark: new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#f4f6f9'),
+        roughness: 0.92,
+        metalness: 0.0,
       }),
     };
   }
 
   updateLightingResponse(style: ArchitecturalStyle, preset: LightingPreset): void {
     const p = this.getPalette(style);
+    const dayGlassHex =
+      style === 'brick-loft' ? '#c4cdd6' : style === 'travertine-bronze' ? '#d4cec4' : '#c9d4de';
+
     if (preset === 'twilight') {
-      // Warm lit hollow 3D interiors glow vividly through crisp dusk sky reflections
-      p.emissiveWarm.emissiveIntensity = 4.5;
-      p.interiorCeiling.emissive.set('#ffcf8c');
-      p.interiorCeiling.emissiveIntensity = 0.55;
-      p.interiorWall.emissive.set('#e8b272');
-      p.interiorWall.emissiveIntensity = 0.28;
-      p.interiorFloor.emissive.set('#c49058');
-      p.interiorFloor.emissiveIntensity = 0.16;
-      p.glass.opacity = 0.26;
-      p.glass.metalness = 0.42;
-      p.glass.envMapIntensity = 2.4;
+      // Moody Blue Hour (like blue-hour.jpg): dark reflective cobalt glass + cozy warm amber interior rooms
+      p.emissiveWarm.emissiveIntensity = 3.2;
+      p.interiorCeiling.emissive.set('#e89948');
+      p.interiorCeiling.emissiveIntensity = 0.09;
+      p.interiorWall.emissive.set('#c47430');
+      p.interiorWall.emissiveIntensity = 0.05;
+      p.interiorFloor.emissive.set('#6e3f18');
+      p.interiorFloor.emissiveIntensity = 0.025;
+      this.glassBaseOpacityUniform.value = 0.03;
+      p.glass.color.set('#7a97c4');
+      p.glass.envMapIntensity = 0.22;
+      p.balustradeGlass.color.set('#6682b0');
+      p.balustradeGlass.envMapIntensity = 0.16;
+      p.spandrelGlass.envMapIntensity = 0.22;
     } else if (preset === 'golden-hour') {
-      p.emissiveWarm.emissiveIntensity = 2.2;
-      p.interiorCeiling.emissive.set('#ffe4be');
-      p.interiorCeiling.emissiveIntensity = 0.16;
-      p.interiorWall.emissive.set('#f2d7b4');
-      p.interiorWall.emissiveIntensity = 0.06;
-      p.interiorFloor.emissive.set('#000000');
-      p.interiorFloor.emissiveIntensity = 0.0;
-      p.glass.opacity = 0.36;
-      p.glass.metalness = 0.52;
-      p.glass.envMapIntensity = 3.8;
-    } else {
-      // daylight: ultra-crisp exterior mirror reflection of clouds + clear sunlit hollow interior
-      p.emissiveWarm.emissiveIntensity = 0.9;
-      p.interiorCeiling.emissive.set('#ffffff');
+      p.emissiveWarm.emissiveIntensity = 1.8;
+      p.interiorCeiling.emissive.set('#ffc884');
       p.interiorCeiling.emissiveIntensity = 0.06;
       p.interiorWall.emissive.set('#000000');
       p.interiorWall.emissiveIntensity = 0.0;
       p.interiorFloor.emissive.set('#000000');
       p.interiorFloor.emissiveIntensity = 0.0;
-      p.glass.opacity = 0.38;
-      p.glass.metalness = 0.56;
-      p.glass.envMapIntensity = 3.8;
+      this.glassBaseOpacityUniform.value = 0.04;
+      p.glass.color.set('#dfd2c4');
+      p.glass.envMapIntensity = 0.78;
+      p.balustradeGlass.color.set('#c8bab0');
+      p.balustradeGlass.envMapIntensity = 0.42;
+      p.spandrelGlass.envMapIntensity = 0.65;
+    } else {
+      // Architectural Daylight: dark deep interior contrast + crisp non-blown-out sky reflections
+      p.emissiveWarm.emissiveIntensity = 0.8;
+      p.interiorCeiling.emissive.set('#000000');
+      p.interiorCeiling.emissiveIntensity = 0.0;
+      p.interiorWall.emissive.set('#000000');
+      p.interiorWall.emissiveIntensity = 0.0;
+      p.interiorFloor.emissive.set('#000000');
+      p.interiorFloor.emissiveIntensity = 0.0;
+      this.glassBaseOpacityUniform.value = 0.04;
+      p.glass.color.set(dayGlassHex);
+      p.glass.envMapIntensity = 0.85;
+      p.balustradeGlass.color.set('#bfd0dc');
+      p.balustradeGlass.envMapIntensity = 0.52;
+      p.spandrelGlass.envMapIntensity = 0.75;
     }
   }
 
