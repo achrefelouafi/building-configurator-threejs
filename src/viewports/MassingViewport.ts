@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { Fn, float, vec3, vec4 } from 'three/tsl';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   DragPreviewInfo,
@@ -97,15 +98,16 @@ export class MassingViewport {
     this.callbacks = callbacks;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#0d121c');
-    this.scene.fog = new THREE.Fog('#0d121c', 75, 190);
+    this.scene.background = null;
+    this.scene.fog = null;
 
     const w = Math.max(1, container.clientWidth);
     const h = Math.max(1, container.clientHeight);
     this.camera = new THREE.PerspectiveCamera(32, w / h, 0.25, 600);
     this.camera.position.set(28, 19, 32);
 
-    this.renderer = new THREE.WebGPURenderer({ antialias: true });
+    this.renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+    this.renderer.setClearColor('#000000', 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = true;
@@ -189,8 +191,8 @@ export class MassingViewport {
   }
 
   private setupStudioEnvironment(): void {
-    // Crisp CAD three-point lighting
-    const hemi = new THREE.HemisphereLight('#dbeafe', '#1e293b', 1.15);
+    // Clean neutral white studio lighting
+    const hemi = new THREE.HemisphereLight('#ffffff', '#d4d4d4', 1.15);
     this.scene.add(hemi);
 
     const key = new THREE.DirectionalLight('#ffffff', 1.45);
@@ -207,31 +209,44 @@ export class MassingViewport {
     key.shadow.bias = -0.0004;
     this.scene.add(key);
 
-    const rim = new THREE.DirectionalLight('#7dd3fc', 0.55);
+    const rim = new THREE.DirectionalLight('#ffffff', 0.55);
     rim.position.set(-22, 16, -24);
     this.scene.add(rim);
 
-    // Subtle ground shadow catcher
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(240, 240),
-      new THREE.MeshStandardMaterial({
-        color: new THREE.Color('#111827'),
-        roughness: 0.95,
-        metalness: 0.0,
-      })
+    // Minimalistic transparent shadow catcher on pure #ffffff white background (WebGPU-safe TSL)
+    const totalShadow = float(1.0).toVar();
+    const groundMat = new THREE.MeshStandardNodeMaterial({
+      color: new THREE.Color('#000000'),
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+    });
+    groundMat.receivedShadowNode = Fn(([shadow]: [ReturnType<typeof float>]) => {
+      totalShadow.mulAssign(shadow);
+      return shadow;
+    }) as unknown as THREE.Node;
+    groundMat.outputNode = vec4(
+      vec3(0.0, 0.0, 0.0),
+      float(1.0).sub(totalShadow).mul(0.13)
     );
+
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.02;
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Dual-resolution metric drafting grid (1m minor + 5m major)
-    const minorGrid = new THREE.GridHelper(100, 100, '#1e293b', '#172033');
+    // Subtle neutral drafting grid (1m minor + 5m major) on pure white studio floor
+    const minorGrid = new THREE.GridHelper(100, 100, '#efefef', '#f5f5f5');
     minorGrid.position.y = -0.005;
+    (minorGrid.material as THREE.Material).transparent = true;
+    (minorGrid.material as THREE.Material).opacity = 0.65;
     this.scene.add(minorGrid);
 
-    const majorGrid = new THREE.GridHelper(100, 20, '#334155', '#243247');
+    const majorGrid = new THREE.GridHelper(100, 20, '#dcdcdc', '#e6e6e6');
     majorGrid.position.y = 0.0;
+    (majorGrid.material as THREE.Material).transparent = true;
+    (majorGrid.material as THREE.Material).opacity = 0.85;
     this.scene.add(majorGrid);
 
     // Subtle metric origin axis ticks

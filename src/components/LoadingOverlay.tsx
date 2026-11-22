@@ -35,8 +35,8 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
 
   useEffect(() => {
     if (!allReady) return;
-    const t1 = window.setTimeout(() => setFading(true), 220);
-    const t2 = window.setTimeout(() => setUnmounted(true), 720);
+    const t1 = window.setTimeout(() => setFading(true), 180);
+    const t2 = window.setTimeout(() => setUnmounted(true), 640);
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
@@ -45,6 +45,16 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
 
   if (unmounted) return null;
 
+  const statusLabel = allReady
+    ? 'Ready'
+    : !gpuDone
+    ? 'Initializing 3D engine'
+    : !texturesDone
+    ? `Loading materials (${snapshot.texturesLoaded}/${snapshot.texturesTotal})`
+    : !hdrisDone
+    ? `Loading lighting (${snapshot.hdrisLoaded}/${snapshot.hdrisTotal})`
+    : 'Preparing studio';
+
   return (
     <div
       className={`loader-overlay ${fading ? 'fading' : ''}`}
@@ -52,77 +62,52 @@ export const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
       aria-live="polite"
       aria-label="Loading 3D building configurator assets"
     >
-      <div className="loader-grid-bg" />
-
       <div className="loader-card">
         <div className="loader-header">
           <div className="loader-logo">
-            <Building2 size={22} />
+            <Building2 size={18} strokeWidth={1.8} />
           </div>
-          <div>
+          <div className="loader-brand-copy">
             <div className="loader-title">VOLUMECRAFT</div>
-            <div className="loader-subtitle">
-              Parametric Massing Studio · WebGPU PBR Engine
-            </div>
+            <div className="loader-subtitle">Parametric Building Studio</div>
           </div>
         </div>
 
         <div className="loader-bar-wrap">
-          <div className="loader-bar-meta">
-            <span className="loader-status-text">
-              {allReady ? 'Studio Ready' : 'Preloading PBR Materials & HDRI Skies…'}
-            </span>
-            <span className="loader-percent">{progress}%</span>
-          </div>
           <div className="loader-track">
             <div className="loader-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="loader-bar-meta">
+            <span className="loader-status-text">{statusLabel}</span>
+            <span className="loader-percent">{progress}%</span>
           </div>
         </div>
 
         <div className="loader-steps">
           <div className={`loader-step ${gpuDone ? 'done' : 'active'}`}>
             <span className="loader-step-icon">
-              {gpuDone ? <Check size={13} /> : <Loader2 size={13} className="spin" />}
+              {gpuDone ? <Check size={11} strokeWidth={2.2} /> : <Loader2 size={11} className="spin" />}
             </span>
-            <span className="loader-step-label">Dual 3D Viewports</span>
-            <span className="loader-step-detail">
-              {snapshot.gpuBackend ? snapshot.gpuBackend : 'Initializing…'}
-            </span>
+            <span className="loader-step-label">{snapshot.gpuBackend ?? 'Engine'}</span>
           </div>
 
-          <div className={`loader-step ${texturesDone ? 'done' : 'active'}`}>
+          <div className={`loader-step ${texturesDone ? 'done' : gpuDone ? 'active' : ''}`}>
             <span className="loader-step-icon">
-              {texturesDone ? <Check size={13} /> : <Loader2 size={13} className="spin" />}
+              {texturesDone ? <Check size={11} strokeWidth={2.2} /> : <Loader2 size={11} className="spin" />}
             </span>
-            <span className="loader-step-label">AmbientCG PBR Maps</span>
-            <span className="loader-step-detail">
-              {snapshot.texturesLoaded} / {snapshot.texturesTotal}
+            <span className="loader-step-label">
+              Materials {snapshot.texturesLoaded}/{snapshot.texturesTotal}
             </span>
           </div>
 
-          <div className={`loader-step ${hdrisDone ? 'done' : 'active'}`}>
+          <div className={`loader-step ${hdrisDone ? 'done' : texturesDone ? 'active' : ''}`}>
             <span className="loader-step-icon">
-              {hdrisDone ? <Check size={13} /> : <Loader2 size={13} className="spin" />}
+              {hdrisDone ? <Check size={11} strokeWidth={2.2} /> : <Loader2 size={11} className="spin" />}
             </span>
-            <span className="loader-step-label">Poly Haven 2K HDRI Skies</span>
-            <span className="loader-step-detail">
-              {snapshot.hdrisLoaded} / {snapshot.hdrisTotal}
-            </span>
-          </div>
-
-          <div className={`loader-step ${snapshot.warmedUp ? 'done' : gpuDone && texturesDone && hdrisDone ? 'active' : ''}`}>
-            <span className="loader-step-icon">
-              {snapshot.warmedUp ? <Check size={13} /> : <Loader2 size={13} className="spin" />}
-            </span>
-            <span className="loader-step-label">Shader & GPU Pipeline Warmup</span>
-            <span className="loader-step-detail">
-              {snapshot.warmedUp ? 'Compiled' : 'Pending'}
+            <span className="loader-step-label">
+              Lighting {snapshot.hdrisLoaded}/{snapshot.hdrisTotal}
             </span>
           </div>
-        </div>
-
-        <div className="loader-current-asset" title={snapshot.currentAsset}>
-          {snapshot.currentAsset}
         </div>
       </div>
     </div>

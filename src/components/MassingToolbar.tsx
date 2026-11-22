@@ -62,7 +62,7 @@ export const MassingToolbar: React.FC<MassingToolbarProps> = ({
         <div className="face-inspector">
           <div className="face-inspector-top">
             <span className="face-inspector-title">
-              <Box size={13} color="#38bdf8" />
+              <Box size={13} strokeWidth={1.8} />
               {dirLabel(selectedFace.dir)}
             </span>
             <span className="face-inspector-dims">

@@ -28,7 +28,6 @@ import { denoise } from 'three/examples/jsm/tsl/display/DenoiseNode.js';
 import { ArchitecturalStyle, LightingPreset, MassingState } from '../core/types';
 import { PBRMaterialLibrary, TextureLoadProgress } from '../building/materials';
 import { generatePBRBuilding } from '../building/buildingGenerator';
-import { ArchitecturalCityContext } from '../building/cityContext';
 
 export type GPUBackendKind = 'WebGPU' | 'WebGL2';
 
@@ -231,7 +230,6 @@ export class BuildingViewport {
   private materialLib: PBRMaterialLibrary;
   private rgbeLoader = new RGBELoader();
   private hdriCache = new Map<LightingPreset, THREE.DataTexture>();
-  private cityContext = new ArchitecturalCityContext();
 
   // Exact 5-Light Architectural Studio Rig (from ProdceduralBuildingsThreeJS/src/studio.ts)
   private keyLight: THREE.DirectionalLight;
@@ -243,7 +241,7 @@ export class BuildingViewport {
   // Exact ProdceduralBuildingsThreeJS/src/postfx.ts WebGPU TSL Stack (NO bloom washout!):
   // Render -> Selective GTAO + Denoise -> renderOutput (ToneMap + sRGB) -> Display-Space FilmGrade
   private postProcessing: THREE.PostProcessing | null = null;
-  private aoStrengthUniform = uniform(0.85);
+  private aoStrengthUniform = uniform(0.0);
   private gradeTime = uniform(0.0);
   private gradeContrast = uniform(1.07);
   private gradeSaturation = uniform(1.02);
@@ -254,15 +252,14 @@ export class BuildingViewport {
   private gradeHighlightTint = uniform(new THREE.Color('#ffffff'));
   private gradeSplitTone = uniform(0.03);
 
-  private postFXEnabled = true;
+  private postFXEnabled = false;
   private postFXFailed = false;
 
   private buildingRoot = new THREE.Group();
   private currentBounds = new THREE.Box3();
   private currentStyle: ArchitecturalStyle = 'contemporary';
-  private currentLighting: LightingPreset = 'daylight';
+  private currentLighting: LightingPreset = 'golden-hour';
   private showColumns = true;
-  private showSite = true;
   private lastState: MassingState | null = null;
 
   private resizeObserver: ResizeObserver;
@@ -287,8 +284,8 @@ export class BuildingViewport {
     this.callbacks = callbacks;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(STUDIO_LOOKS.daylight.backdropColor);
-    this.scene.backgroundBlurriness = 0.015;
+    this.scene.background = null;
+    this.scene.fog = null;
 
     // 32° architectural telephoto lens (matches ProdceduralBuildingsThreeJS!)
     const w = Math.max(1, container.clientWidth);
@@ -296,13 +293,14 @@ export class BuildingViewport {
     this.camera = new THREE.PerspectiveCamera(32, w / h, 0.25, 600);
     this.camera.position.set(28, 19, 32);
 
-    this.renderer = new THREE.WebGPURenderer({ antialias: true });
+    this.renderer = new THREE.WebGPURenderer({ antialias: true, alpha: true });
+    this.renderer.setClearColor('#000000', 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = STUDIO_LOOKS.daylight.exposure;
+    this.renderer.toneMapping = STUDIO_LOOKS['golden-hour'].tone;
+    this.renderer.toneMappingExposure = STUDIO_LOOKS['golden-hour'].exposure;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
@@ -353,7 +351,6 @@ export class BuildingViewport {
     );
 
     this.scene.add(this.buildingRoot);
-    this.scene.add(this.cityContext.group);
 
     this.applyLightingPreset(this.currentLighting);
     this.preloadAllHdris();
@@ -422,9 +419,13 @@ export class BuildingViewport {
       denoisePass.depthPhi.value = 2;
       denoisePass.normalPhi.value = 3;
 
+      // Preserve exact MSAA silhouette & glass coverage while keeping the background pure #ffffff
+      const alpha = clamp(scenePassColor.a, float(0.0), float(1.0));
+      const unpremulRGB = scenePassColor.rgb.div(max(alpha, float(0.0001)));
+
       // Apply denoised GTAO cleanly to linear RGB (matches postfx.ts blendIntensity = 0.85)
       const aoFactor = mix(float(1.0), denoisePass.r, this.aoStrengthUniform);
-      const litWithAO = vec4(scenePassColor.rgb.mul(aoFactor), scenePassColor.a);
+      const litWithAO = vec4(unpremulRGB.mul(aoFactor), float(1.0));
 
       // Tone mapping + sRGB conversion into display space (identical to OutputPass in postfx.ts!)
       const displayNode = renderOutput(litWithAO);
@@ -457,9 +458,12 @@ export class BuildingViewport {
       const midWeight = float(0.4).add(float(0.6).mul(float(1.0).sub(abs(luma1.sub(0.5)).mul(2.0))));
       const colGraded = clamp(colVig.add(grainNoise.mul(this.gradeGrain).mul(midWeight)), 0.0, 1.0);
 
+      // Composite graded building cleanly over pure minimalist white backdrop (#ffffff)
+      const finalRGB = mix(vec3(1.0, 1.0, 1.0), colGraded, alpha);
+
       const pp = new THREE.PostProcessing(this.renderer);
       pp.outputColorTransform = false;
-      pp.outputNode = vec4(colGraded, float(1.0));
+      pp.outputNode = vec4(finalRGB, float(1.0));
       this.postProcessing = pp;
     } catch {
       this.postProcessing = null;
@@ -494,9 +498,7 @@ export class BuildingViewport {
 
           if (preset === this.currentLighting) {
             this.scene.environment = hdrTex;
-            this.scene.background = look.useFlatBackdrop
-              ? new THREE.Color(look.backdropColor)
-              : hdrTex;
+            this.scene.background = null;
             this.materialLib.setEnvironmentMap(hdrTex);
             this.callbacks.onHdriLoading?.(false);
           }
@@ -528,9 +530,8 @@ export class BuildingViewport {
     this.renderer.toneMappingExposure = L.exposure;
 
     this.scene.environmentIntensity = L.envIntensity;
-    this.scene.backgroundIntensity = L.bgIntensity;
-    this.scene.fog = new THREE.FogExp2(L.fogColor, L.fogDensity);
-    this.cityContext.setTone(L.cityTint);
+    this.scene.background = null;
+    this.scene.fog = null;
 
     this.gradeContrast.value = L.contrast;
     this.gradeSaturation.value = L.saturation;
@@ -544,11 +545,9 @@ export class BuildingViewport {
     const cached = this.hdriCache.get(preset);
     if (cached) {
       this.scene.environment = cached;
-      this.scene.background = L.useFlatBackdrop ? new THREE.Color(L.backdropColor) : cached;
       this.materialLib.setEnvironmentMap(cached);
       this.callbacks.onHdriLoading?.(false);
     } else {
-      this.scene.background = new THREE.Color(L.backdropColor);
       this.callbacks.onHdriLoading?.(true);
     }
 
@@ -630,13 +629,11 @@ export class BuildingViewport {
   public updateBuilding(
     state: MassingState,
     style: ArchitecturalStyle,
-    showColumns: boolean,
-    showSite: boolean
+    showColumns: boolean
   ): void {
     this.lastState = state;
     this.currentStyle = style;
     this.showColumns = showColumns;
-    this.showSite = showSite;
 
     while (this.buildingRoot.children.length > 0) {
       const child = this.buildingRoot.children[0];
@@ -654,16 +651,10 @@ export class BuildingViewport {
     const { group, bounds } = generatePBRBuilding(state, palette, {
       style,
       showColumns,
-      showSite,
     });
 
     this.buildingRoot.add(group);
     this.currentBounds.copy(bounds);
-
-    this.cityContext.group.visible = showSite;
-    if (showSite) {
-      this.cityContext.updateForBounds(bounds);
-    }
 
     this.positionStudioLights();
   }
@@ -674,7 +665,7 @@ export class BuildingViewport {
 
   public setStyle(style: ArchitecturalStyle): void {
     if (this.lastState) {
-      this.updateBuilding(this.lastState, style, this.showColumns, this.showSite);
+      this.updateBuilding(this.lastState, style, this.showColumns);
     } else {
       this.currentStyle = style;
     }
@@ -697,10 +688,6 @@ export class BuildingViewport {
     this.gradeTime.value += dt;
 
     this.controls.update();
-
-    if (this.showSite) {
-      this.cityContext.tickViewClear(dt, this.camera, this.controls.target);
-    }
 
     if (this.postProcessing && this.postFXEnabled && !this.postFXFailed) {
       try {
@@ -739,7 +726,6 @@ export class BuildingViewport {
         if ((obj as THREE.Mesh).geometry) (obj as THREE.Mesh).geometry.dispose();
       });
     }
-    this.cityContext.dispose();
     for (const tex of this.hdriCache.values()) {
       tex.dispose();
     }

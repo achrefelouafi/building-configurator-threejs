@@ -84,12 +84,11 @@ export const App: React.FC = () => {
   const [splitAxis, setSplitAxis] = useState<SplitAxis>('auto');
   const [floorSnap, setFloorSnap] = useState<boolean>(true);
 
-  // ArchViz PBR states (defaults to crisp Architectural Daylight matching ProdceduralBuildingsThreeJS)
+  // ArchViz PBR states (defaults to Golden Hour with GTAO disabled)
   const [style, setStyle] = useState<ArchitecturalStyle>('contemporary');
-  const [lighting, setLighting] = useState<LightingPreset>('daylight');
+  const [lighting, setLighting] = useState<LightingPreset>('golden-hour');
   const [showColumns, setShowColumns] = useState<boolean>(true);
-  const [showSite, setShowSite] = useState<boolean>(true);
-  const [postFX, setPostFX] = useState<boolean>(true);
+  const [postFX, setPostFX] = useState<boolean>(false);
   const [cameraSync, setCameraSync] = useState<boolean>(true);
   const [gpuBackend, setGpuBackend] = useState<GPUBackendKind | null>(null);
   const [hdriLoading, setHdriLoading] = useState<boolean>(true);
@@ -212,8 +211,8 @@ export const App: React.FC = () => {
   // Sync live massing (or live drag preview!) + style to Right PBR Building Viewport
   const activeBuildingState = previewState ?? history.present;
   useEffect(() => {
-    buildingVpRef.current?.updateBuilding(activeBuildingState, style, showColumns, showSite);
-  }, [activeBuildingState, style, showColumns, showSite]);
+    buildingVpRef.current?.updateBuilding(activeBuildingState, style, showColumns);
+  }, [activeBuildingState, style, showColumns]);
 
   useEffect(() => {
     buildingVpRef.current?.applyLightingPreset(lighting);
@@ -352,11 +351,25 @@ export const App: React.FC = () => {
       selectPreset: (id: MassingPresetKey) => handleSelectPreset(id),
       selectStyle: (id: ArchitecturalStyle) => setStyle(id),
       selectLighting: (id: LightingPreset) => setLighting(id),
-      selectFaceByDir: (dir: string) => {
+      setPostFX: (enabled: boolean) => setPostFX(enabled),
+      selectFaceByDir: (
+        dir: string,
+        mode: 'largest' | 'highest' | 'lowest' | 'smallest' = 'largest',
+        index = 0
+      ) => {
         const faces = computeExposedFaces(stateRef.current).filter((f) => !f.locked && f.dir === dir);
         if (faces.length === 0) return false;
-        faces.sort((a, b) => b.width * b.height - a.width * a.height);
-        setSelectedFaceId(faces[0].id);
+        if (mode === 'highest') {
+          faces.sort((a, b) => b.center[1] - a.center[1] || b.width * b.height - a.width * a.height);
+        } else if (mode === 'lowest') {
+          faces.sort((a, b) => a.center[1] - b.center[1] || b.width * b.height - a.width * a.height);
+        } else if (mode === 'smallest') {
+          faces.sort((a, b) => a.width * a.height - b.width * b.height);
+        } else {
+          faces.sort((a, b) => b.width * b.height - a.width * a.height);
+        }
+        const picked = faces[Math.min(Math.max(0, index), faces.length - 1)];
+        setSelectedFaceId(picked.id);
         return true;
       },
       previewExtrude: (delta: number, isSetback = false) => {
@@ -521,12 +534,10 @@ export const App: React.FC = () => {
               style={style}
               lighting={lighting}
               showColumns={showColumns}
-              showSite={showSite}
               postFX={postFX}
               onStyleChange={setStyle}
               onLightingChange={setLighting}
               onToggleColumns={() => setShowColumns((v) => !v)}
-              onToggleSite={() => setShowSite((v) => !v)}
               onTogglePostFX={() => setPostFX((v) => !v)}
             />
 

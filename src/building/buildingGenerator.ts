@@ -20,7 +20,6 @@ import { BuildingMaterialPalette } from './materials';
 export interface BuildingBuildOptions {
   style: ArchitecturalStyle;
   showColumns: boolean;
-  showSite: boolean;
 }
 
 interface WallInterval {
@@ -118,11 +117,6 @@ export function generatePBRBuilding(
   // 5. Cantilevered timber soffits, recessed downlights & tall structural pilotis
   for (const patch of soffitPatches) {
     buildCantileverSoffit(batcher, patch, state.boxes, options.showColumns);
-  }
-
-  // 6. Calm pale architectural street, crosswalks, limestone sidewalk & corner street trees
-  if (options.showSite) {
-    buildSiteContext(batcher, foliageBatcher, state.boxes, minX, maxX, minZ, maxZ);
   }
 
   const group = new THREE.Group();
@@ -1189,124 +1183,5 @@ function buildCantileverSoffit(
       batcher.addCylinder('mullion', cx, baseY, baseY + 0.14, cz, 0.29, 0.27, 18);
       batcher.addCylinder('mullion', cx, y - 0.20, y - 0.05, cz, 0.27, 0.31, 18);
     }
-  }
-}
-
-/**
- * Calm pale urban street, white crosswalk stripes & dashed lane lines, crisp limestone
- * sidewalk plinth (matching ProdceduralBuildingsThreeJS app.jpg / city.jpg / new-york.jpg!)
- * and tasteful corner street trees that never block the entrance!
- */
-function buildSiteContext(
-  batcher: MaterialGeometryBatcher,
-  foliageBatcher: BotanicalFoliageBatcher,
-  boxes: MassingBox[],
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number
-): void {
-  const pad = 3.8;
-  const px0 = minX - pad;
-  const px1 = maxX + pad;
-  const pz0 = minZ - pad;
-  const pz1 = maxZ + pad;
-
-  // Compact raised limestone sidewalk plinth (0.15m tall like SIDEWALK in studio.ts!)
-  batcher.addBox('plazaPaver', px0, -0.15, pz0, px1, 0.0, pz1, 2.4);
-  // Crisp light granite perimeter curb framing the sidewalk
-  const curbW = 0.26;
-  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz0 - curbW, px1 + curbW, 0.008, pz0, 1.8);
-  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz1, px1 + curbW, 0.008, pz1 + curbW, 1.8);
-  batcher.addBox('facadeSecondary', px0 - curbW, -0.16, pz0, px0, 0.008, pz1, 1.8);
-  batcher.addBox('facadeSecondary', px1, -0.16, pz0, px1 + curbW, 0.008, pz1, 1.8);
-
-  // Calm pale architectural model road plane
-  batcher.addBox('asphalt', px0 - 150, -0.24, pz0 - 150, px1 + 150, -0.155, pz1 + 150, 7.0);
-
-  // Crisp subtle white architectural crosswalks & dashed center lane markings around the hero block
-  const roadW = 9.4;
-  const roadMidSouth = pz1 + curbW + roadW * 0.5;
-  const roadMidNorth = pz0 - curbW - roadW * 0.5;
-  const roadMidEast = px1 + curbW + roadW * 0.5;
-  const roadMidWest = px0 - curbW - roadW * 0.5;
-  const markY0 = -0.154;
-  const markY1 = -0.145;
-
-  // Dashed lane lines along South & North avenues
-  for (let x = px0 - 40; x <= px1 + 40; x += 5.4) {
-    if (Math.abs(x - roadMidEast) < 6.0 || Math.abs(x - roadMidWest) < 6.0) continue;
-    batcher.addBox('roadMark', x, markY0, roadMidSouth - 0.08, x + 2.4, markY1, roadMidSouth + 0.08, 2.0);
-    batcher.addBox('roadMark', x, markY0, roadMidNorth - 0.08, x + 2.4, markY1, roadMidNorth + 0.08, 2.0);
-  }
-  // Dashed lane lines along East & West cross-streets
-  for (let z = pz0 - 40; z <= pz1 + 40; z += 5.4) {
-    if (Math.abs(z - roadMidSouth) < 6.0 || Math.abs(z - roadMidNorth) < 6.0) continue;
-    batcher.addBox('roadMark', roadMidEast - 0.08, markY0, z, roadMidEast + 0.08, markY1, z + 2.4, 2.0);
-    batcher.addBox('roadMark', roadMidWest - 0.08, markY0, z, roadMidWest + 0.08, markY1, z + 2.4, 2.0);
-  }
-
-  // Zebra crosswalk bars tight at the 4 corners around the hero block (signature look of app.jpg & new-york.jpg!)
-  const addCrosswalkX = (cx: number, czCenter: number) => {
-    for (let k = -3; k <= 3; k++) {
-      const z = czCenter + k * 1.05;
-      batcher.addBox('roadMark', cx - 1.45, markY0, z - 0.25, cx + 1.45, markY1, z + 0.25, 2.0);
-    }
-  };
-  const addCrosswalkZ = (cxCenter: number, cz: number) => {
-    for (let k = -3; k <= 3; k++) {
-      const x = cxCenter + k * 1.05;
-      batcher.addBox('roadMark', x - 0.25, markY0, cz - 1.45, x + 0.25, markY1, cz + 1.45, 2.0);
-    }
-  };
-  addCrosswalkX(px0 + 0.6, roadMidSouth);
-  addCrosswalkX(px1 - 0.6, roadMidSouth);
-  addCrosswalkX(px0 + 0.6, roadMidNorth);
-  addCrosswalkX(px1 - 0.6, roadMidNorth);
-  addCrosswalkZ(roadMidWest, pz1 - 0.6);
-  addCrosswalkZ(roadMidWest, pz0 + 0.6);
-  addCrosswalkZ(roadMidEast, pz1 - 0.6);
-  addCrosswalkZ(roadMidEast, pz0 + 0.6);
-
-  const isClearOfBuilding = (x: number, z: number, radius: number) =>
-    !boxes.some(
-      (b) =>
-        x >= b.min[0] - radius &&
-        x <= b.max[0] + radius &&
-        z >= b.min[2] - radius &&
-        z <= b.max[2] + radius
-    );
-
-  // Tasteful corner-only architectural street trees tucked near outer curb corners (like blue-hour.jpg!)
-  const treeCandidates: [number, number][] = [
-    [px0 + 1.05, pz1 - 1.05],
-    [px1 - 1.05, pz1 - 1.05],
-    [px0 + 1.05, pz0 + 1.05],
-    [px1 - 1.05, pz0 + 1.05],
-  ];
-
-  treeCandidates.forEach(([tx, tz], idx) => {
-    if (!isClearOfBuilding(tx, tz, 2.0)) return;
-    const hScale = 0.62 + (idx % 2) * 0.07;
-    batcher.addBox('concrete', tx - 0.62, 0.0, tz - 0.62, tx + 0.62, 0.22, tz + 0.62, 1.8);
-    batcher.addBox('bark', tx - 0.5, 0.18, tz - 0.5, tx + 0.5, 0.24, tz + 0.5, 1.0);
-    foliageBatcher.addArchitecturalTree(tx, 0.22, tz, hScale, 1301 + idx * 97);
-  });
-
-  // Slim modern architectural street bollards along curb corners
-  const bollardPoints: [number, number][] = [
-    [px0 + 3.8, pz1 - 0.45],
-    [px1 - 3.8, pz1 - 0.45],
-    [px0 + 3.8, pz0 + 0.45],
-    [px1 - 3.8, pz0 + 0.45],
-    [px0 + 0.45, (pz0 + pz1) * 0.5],
-    [px1 - 0.45, (pz0 + pz1) * 0.5],
-  ];
-
-  for (const [bx, bz] of bollardPoints) {
-    if (!isClearOfBuilding(bx, bz, 1.4)) continue;
-    batcher.addCylinder('mullion', bx, 0.0, 0.74, bz, 0.055, 0.055, 12);
-    batcher.addCylinder('emissiveWarm', bx, 0.74, 0.86, bz, 0.05, 0.05, 12);
-    batcher.addCylinder('mullion', bx, 0.86, 0.91, bz, 0.06, 0.055, 12);
   }
 }

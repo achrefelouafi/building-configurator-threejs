@@ -1,17 +1,15 @@
 import React from 'react';
-import { Columns3, Moon, Sparkles, Sun, Sunrise, Trees } from 'lucide-react';
+import { Columns3, Moon, Sparkles, Sun, Sunrise } from 'lucide-react';
 import { ArchitecturalStyle, LightingPreset } from '../core/types';
 
 interface BuildingControlsProps {
   style: ArchitecturalStyle;
   lighting: LightingPreset;
   showColumns: boolean;
-  showSite: boolean;
   postFX: boolean;
   onStyleChange: (style: ArchitecturalStyle) => void;
   onLightingChange: (preset: LightingPreset) => void;
   onToggleColumns: () => void;
-  onToggleSite: () => void;
   onTogglePostFX: () => void;
 }
 
@@ -25,12 +23,10 @@ export const BuildingControls: React.FC<BuildingControlsProps> = ({
   style,
   lighting,
   showColumns,
-  showSite,
   postFX,
   onStyleChange,
   onLightingChange,
   onToggleColumns,
-  onToggleSite,
   onTogglePostFX,
 }) => {
   return (
@@ -92,15 +88,6 @@ export const BuildingControls: React.FC<BuildingControlsProps> = ({
       >
         <Columns3 size={13} />
         <span>Pilotis</span>
-      </button>
-
-      <button
-        className={`dock-btn ${showSite ? 'active' : ''}`}
-        onClick={onToggleSite}
-        title="Toggle surrounding city context, sidewalk, and trees"
-      >
-        <Trees size={13} />
-        <span>City</span>
       </button>
     </div>
   );
